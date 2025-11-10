@@ -94,7 +94,7 @@ Anchors::Anchors(
         Ptree json;
         boost::property_tree::read_json(jsonFileName, json);
 
-        cout << "File " << jsonFileName << "contains " << json.size() << " candidate anchors." << endl;
+        cout << "File " << jsonFileName << " contains " << json.size() << " candidate anchors." << endl;
 
 
 
@@ -278,7 +278,9 @@ bool Anchors::processCandidateAnchor(
     const uint64_t length0 = interval0.length();
     bool foundDiscrepancy = false;
     if(length0 < k) {
-        // cout << "Anchor is too short." << endl;
+    	if(debug) {
+    		cout << "Anchor is too short." << endl;
+    	}
         return false;
     }
     for(uint64_t i=1; i<intervals.size(); i++) {
@@ -297,10 +299,19 @@ bool Anchors::processCandidateAnchor(
         for(uint64_t j=0; j<length; j++) {
             const Base b0 = reads.getOrientedReadBase(interval0.orientedReadId, uint32_t(interval0.begin + j));
             const Base b = reads.getOrientedReadBase(interval.orientedReadId, uint32_t(interval.begin + j));
-            if(b != b0) {
-                foundDiscrepancy = true;
+            if(debug) {
+            	cout << "Checking sequence " <<
+					interval0.orientedReadId << " " << interval.orientedReadId << " "  <<
+					j << " " << interval0.begin + j << " " << interval.begin + j << " " <<
+					b0 << " " << b << endl;
             }
-            break;
+            if(b != b0) {
+            	if(debug) {
+            		cout << "Found sequence discrepancy." << endl;
+            	}
+                foundDiscrepancy = true;
+                break;
+            }
         }
         if(foundDiscrepancy) {
             break;
