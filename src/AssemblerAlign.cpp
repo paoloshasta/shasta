@@ -271,6 +271,7 @@ void Assembler::computeAlignments(
     // Compute the alignments.
     data.threadAlignmentData.resize(threadCount);
     data.threadCompressedAlignments.resize(threadCount);
+    data.threadVariantClusteringPositionPairs.resize(threadCount);
     
     performanceLog << timestamp << "Alignment computation begins." << endl;
     cout << timestamp << "Alignment computation begins." << endl;
@@ -306,6 +307,67 @@ void Assembler::computeAlignments(
     // Release unused allocated memory.
     alignmentData.unreserve();
     compressedAlignments.unreserve();
+
+
+
+
+    // XXX
+    // --- START OF: Position pairs for variant clustering.
+    //
+
+    // Store position pairs collected for variant clustering
+    performanceLog << timestamp << "Storing position pairs for variant clustering." << endl;
+    
+    // First, compute total number of pairs needed
+    size_t totalPairs = 0;
+    for(size_t threadId=0; threadId<threadCount; threadId++) {
+        auto& threadPairsPointer = data.threadVariantClusteringPositionPairs[threadId];
+        if(threadPairsPointer) {
+            totalPairs += threadPairsPointer->size();
+        }
+    }
+
+    // Create vector with appropriate capacity
+    variantClusteringPositionPairs.createNew(
+        largeDataName("VariantClusteringPositionPairs"), largeDataPageSize, 0, totalPairs);
+
+    // Append all pairs from each thread
+    for(size_t threadId=0; threadId<threadCount; threadId++) {
+        auto& threadPairsPointer = data.threadVariantClusteringPositionPairs[threadId];
+        if(threadPairsPointer) {
+            auto& threadPairs = *threadPairsPointer;
+            // Append all pairs from this thread in bulk
+            const size_t oldSize = variantClusteringPositionPairs.size();
+            const size_t newSize = oldSize + threadPairs.size();
+            variantClusteringPositionPairs.resize(newSize);
+            std::copy(threadPairs.begin(), threadPairs.end(), 
+                        variantClusteringPositionPairs.begin() + oldSize);
+            // Free the thread-local storage immediately
+            threadPairs.remove();
+        }
+    }
+    variantClusteringPositionPairs.unreserve();
+    performanceLog << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering." << endl;
+    cout << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering." << endl;
+
+    // // Print the first 10 position pairs
+    // cout << "First 10 position pairs for variant clustering:" << endl;
+    // for(size_t i=0; i<10; i++) {
+    //     cout << variantClusteringPositionPairs[i].first << " " << variantClusteringPositionPairs[i].second << endl;
+    // }
+    // cout << "..." << endl;
+    // cout << "Last 10 position pairs for variant clustering:" << endl;
+    // for(size_t i=variantClusteringPositionPairs.size()-10; i<variantClusteringPositionPairs.size(); i++) {
+    //     cout << variantClusteringPositionPairs[i].first << " " << variantClusteringPositionPairs[i].second << endl;
+    // }
+
+
+    // XXX
+    // --- END OF: Position pairs for variant clustering.
+    //
+
+
+
 
     // Cleanup.
     if(alignOptions.alignMethod == 4) {
@@ -406,6 +468,15 @@ void Assembler::computeAlignmentsThreadFunction(size_t threadId)
     auto& thisThreadCompressedAlignments = *thisThreadCompressedAlignmentsPointer;
     thisThreadCompressedAlignments.createNew(
         largeDataName("tmp-ThreadGlobalCompressedAlignments-" + to_string(threadId)),
+        largeDataPageSize);
+
+    // Create the vector to contain the position pairs collected by this thread.
+    shared_ptr< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > > thisThreadVariantClusteringPositionPairsPointer =
+        make_shared< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > >();
+    data.threadVariantClusteringPositionPairs[threadId] = thisThreadVariantClusteringPositionPairsPointer;
+    auto& thisThreadVariantClusteringPositionPairs = *thisThreadVariantClusteringPositionPairsPointer;
+    thisThreadVariantClusteringPositionPairs.createNew(
+        largeDataName("tmp-ThreadVariantClusteringPositionPairs-" + to_string(threadId)),
         largeDataPageSize);
 
 #if 0
@@ -550,9 +621,27 @@ void Assembler::computeAlignmentsThreadFunction(size_t threadId)
                     *this,
                     orientedReadIds,
                     alignment,
-                    ProjectedAlignment::Method::QuickRle);
-                alignmentInfo.errorRateRle = float(projectedAlignment.errorRateRle());
-                alignmentInfo.mismatchCountRle = uint32_t(projectedAlignment.mismatchCountRle);
+                    ProjectedAlignment::Method::QuickRaw);
+                alignmentInfo.errorRate = float(projectedAlignment.errorRate());
+                alignmentInfo.mismatchCount = uint32_t(projectedAlignment.mismatchCount);
+
+                if (assemblerInfo->readGraphCreationMethod == 5) {
+
+                    // Skip alignments with error rate greater than 0.07.
+                    if (alignmentInfo.errorRate > 0.07) {
+                        continue;
+                    }
+
+                    // Collect position pairs for variant clustering
+                    // Only collect those with SNP differences (No indels)
+                    collectVariantClusteringPositionPairs(
+                        projectedAlignment,
+                        orientedReadIds,
+                        thisThreadVariantClusteringPositionPairs
+                    );
+                }
+
+                
             }
 
             // cout << orientedReadIds[0] << " " << orientedReadIds[1] << " good." << endl;

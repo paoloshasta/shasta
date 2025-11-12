@@ -716,7 +716,7 @@ void shasta::main::assemble(
 
 
     // Compute alignments.
-    const bool computeProjectedAlignmentMetrics = assemblerOptions.readGraphOptions.creationMethod == 4;
+    const bool computeProjectedAlignmentMetrics = ((assemblerOptions.readGraphOptions.creationMethod == 4) || (assemblerOptions.readGraphOptions.creationMethod == 5));
     assembler.computeAlignments(
         assemblerOptions.alignOptions,
         computeProjectedAlignmentMetrics,

@@ -64,6 +64,7 @@ namespace shasta {
     class OrientedReadPair;
     class Reads;
     class ReferenceOverlapMap;
+    class ProjectedAlignment;
 
     namespace mode0 {
         class AssemblyGraph;
@@ -980,6 +981,10 @@ private:
 
         // Compressed alignments corresponding to the AlignmentInfo found by each thread.
         vector< shared_ptr< MemoryMapped::VectorOfVectors<char, uint64_t> > > threadCompressedAlignments;
+
+        // Variant clustering position pairs collected by each thread
+        // Each pair is (OrientedReadId, position)
+        vector< shared_ptr< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > > > threadVariantClusteringPositionPairs;
     };
     ComputeAlignmentsData computeAlignmentsData;
 
@@ -1063,6 +1068,17 @@ public:
     public:
     };
     CreateReadGraph5Data createReadGraph5Data;
+
+    // Storage for position pairs collected during alignment computation
+    MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > variantClusteringPositionPairs;
+    void accessVariantClusteringPositionPairsReadOnly();
+    void accessVariantClusteringPositionPairsReadWrite();
+    void checkVariantClusteringPositionPairsIsOpen() const;
+
+    void collectVariantClusteringPositionPairs(
+        const ProjectedAlignment& projectedAlignment,
+        const array<OrientedReadId, 2>& orientedReadIds,
+        MemoryMapped::Vector< pair<OrientedReadId, uint32_t> >& positionPairs);
 
 
 
