@@ -163,8 +163,9 @@ void ProjectedAlignment::constructQuickRle()
 
 
 
-// This stores only the raw sequences and raw alignments for segments for which the raw sequences
-//  of the two oriented reads are different.
+// This stores only the raw sequences and alignments for segments for which the raw sequences
+// of the two oriented reads are different. Even though it only stores segments with mismatches, 
+// the computed total length includes all segments.
 void ProjectedAlignment::constructQuickRaw()
 {
     // Create the segment outside the loop and reuse it to reduce
