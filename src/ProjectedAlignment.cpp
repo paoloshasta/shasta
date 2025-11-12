@@ -258,7 +258,7 @@ void ProjectedAlignmentSegment::computeAlignment(
             alignment);
     }
 
-    // Compute the number of mismatches in the RLE alignment.
+    // Compute the number of mismatches in the alignment.
     mismatchCount = 0;
     uint64_t position0 = 0;
     uint64_t position1 = 0;
