@@ -593,16 +593,14 @@ void ProjectedAlignment::computeStatistics()
 
 double ProjectedAlignment::errorRate() const
 {
-    // return double(totalEditDistance) / double(totalLength[0] + totalLength[1]);
-    return double(totalEditDistance) / double(min(totalLength[0], totalLength[1]));
+    return double(totalEditDistance) / double(totalLength[0] + totalLength[1]);
 }
 
 
 
 double ProjectedAlignment::errorRateRle() const
 {
-    // return double(totalEditDistanceRle) / double(totalLengthRle[0] + totalLengthRle[1]);
-    return double(totalEditDistanceRle) / double(min(totalLengthRle[0], totalLengthRle[1]));
+    return double(totalEditDistanceRle) / double(totalLengthRle[0] + totalLengthRle[1]);
 }
 
 
