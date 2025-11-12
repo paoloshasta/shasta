@@ -579,14 +579,15 @@ void Assembler::computeAlignmentsThreadFunction(size_t threadId)
                     make_shared< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > >();
                     data.threadVariantClusteringPositionPairs[threadId] = thisThreadVariantClusteringPositionPairsPointer;
                     auto& thisThreadVariantClusteringPositionPairs = *thisThreadVariantClusteringPositionPairsPointer;
+                    thisThreadVariantClusteringPositionPairs.createNew(largeDataName("tmp-ThreadVariantClusteringPositionPairs-" + to_string(threadId)), largeDataPageSize);
 
                     // Collect position pairs for variant clustering
                     // Only collect those with SNP differences (No indels)
                     collectVariantClusteringPositionPairs(
                         projectedAlignment,
                         orientedReadIds,
-                        thisThreadVariantClusteringPositionPairs
-                    );
+                        thisThreadVariantClusteringPositionPairs);
+
                 }
 
                 
