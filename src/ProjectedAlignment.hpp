@@ -85,6 +85,9 @@ public:
     // The number of mismatches in the RLE alignment.
     uint64_t mismatchCountRle = invalid<uint64_t>;
 
+    // The number of mismatches in the raw alignment.
+    uint64_t mismatchCount = invalid<uint64_t>;
+
 
     void writeAlignmentHtml(ostream&) const;
     void writeRleAlignmentHtml(ostream&) const;
@@ -167,6 +170,9 @@ public:
 
     // The number of mismatches in the RLE alignment.
     uint64_t mismatchCountRle;
+
+    // The number of mismatches in the raw alignment.
+    uint64_t mismatchCount;
 
     void computeStatistics();
     double errorRate() const;

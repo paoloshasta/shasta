@@ -210,9 +210,11 @@ public:
     float uniquenessMetric = std::numeric_limits<float>::signaling_NaN();
 
     // ProjectedAlignment metrics.
-    // Only computed for read graph creation method 4.
+    // Only computed for read graph creation method 4 and 5.
     float errorRateRle = invalid<float>;
     uint32_t mismatchCountRle = invalid<uint32_t>;
+    float errorRate = invalid<float>;
+    uint32_t mismatchCount = invalid<uint32_t>;
 
     void clearFlags()
     {

@@ -163,13 +163,19 @@ void ProjectedAlignment::constructQuickRle()
 
 
 
-// This stores only the raw sequences and raw alignments for segments for which the raw sequences
-//  of the two oriented reads are different.
+// This stores only the raw sequences and alignments for segments for which the raw sequences
+// of the two oriented reads are different. Even though it only stores segments with mismatches, 
+// the computed total length includes all segments.
 void ProjectedAlignment::constructQuickRaw()
 {
     // Create the segment outside the loop and reuse it to reduce
     // memory allocation activity.
     ProjectedAlignmentSegment segment;
+
+    // Initialize statistics
+    totalLength = {0, 0};
+    totalEditDistance = 0;
+    mismatchCount = 0;
 
     // Loop over pairs of consecutive aligned markers (A, B).
     for(uint64_t iB=1; iB<alignment.ordinals.size(); iB++) {
@@ -188,6 +194,11 @@ void ProjectedAlignment::constructQuickRaw()
         // Fill in the base sequences.
         fillSequences(segment);
 
+        // Accumulate total lengths (even for identical sequences)
+        for(uint64_t i=0; i<2; i++) {
+            totalLength[i] += segment.sequences[i].size();
+        }
+
         // If the raw sequences are the same, don't store the segment.
         if(segment.sequences[0] == segment.sequences[1]) {
             continue;
@@ -195,6 +206,10 @@ void ProjectedAlignment::constructQuickRaw()
 
         // Align them.
         segment.computeAlignment(matchScore, mismatchScore, gapScore);
+
+        // Accumulate statistics
+        totalEditDistance += segment.editDistance;
+        mismatchCount += segment.mismatchCount;
 
         // Store the segment.
         segments.push_back(segment);
@@ -243,6 +258,24 @@ void ProjectedAlignmentSegment::computeAlignment(
             false,
             alignment);
     }
+
+    // Compute the number of mismatches in the alignment.
+    mismatchCount = 0;
+    uint64_t position0 = 0;
+    uint64_t position1 = 0;
+    for(const pair<bool, bool>& p: alignment) {
+        if(p.first and p.second and (sequence0[position0] != sequence1[position1])) {
+            ++mismatchCount;
+        }
+        if(p.first) {
+            ++position0;
+        }
+        if(p.second) {
+            ++position1;
+        }
+    }
+    SHASTA_ASSERT(position0 == sequence0.size());
+    SHASTA_ASSERT(position1 == sequence1.size());
 
 }
 
@@ -568,7 +601,7 @@ double ProjectedAlignment::errorRate() const
 
 double ProjectedAlignment::errorRateRle() const
 {
-    return double(totalEditDistanceRle) /double(totalLengthRle[0] + totalLengthRle[1]);
+    return double(totalEditDistanceRle) / double(totalLengthRle[0] + totalLengthRle[1]);
 }
 
 
