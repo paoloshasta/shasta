@@ -4,6 +4,8 @@
 #include "SHASTA_ASSERT.hpp"
 #include "iostream.hpp"
 #include "Reads.hpp"
+#include "performanceLog.hpp"
+#include "timestamp.hpp"
 using namespace shasta;
 
 // Helper function called during alignment computation in AssemblerAlign.cpp to collect position pairs
@@ -112,4 +114,50 @@ void Assembler::checkVariantClusteringPositionPairsIsOpen() const
     if(!variantClusteringPositionPairs.isOpen) {
         throw runtime_error("Variant clustering position pairs are not accessible.");
     }
+}
+
+
+
+
+
+
+
+void Assembler::storeVariantClusteringPositionPairs(
+    size_t threadCount,
+    ComputeAlignmentsData& data)
+{
+    // Store position pairs collected for variant clustering
+    performanceLog << timestamp << "Storing position pairs for variant clustering." << endl;
+    
+    // First, compute total number of pairs needed
+    size_t totalPairs = 0;
+    for(size_t threadId=0; threadId<threadCount; threadId++) {
+        auto& threadPairsPointer = data.threadVariantClusteringPositionPairs[threadId];
+        if(threadPairsPointer) {
+            totalPairs += threadPairsPointer->size();
+        }
+    }
+
+    // Create vector with appropriate capacity
+    variantClusteringPositionPairs.createNew(
+        largeDataName("VariantClusteringPositionPairs"), largeDataPageSize, 0, totalPairs);
+
+    // Append all pairs from each thread
+    for(size_t threadId=0; threadId<threadCount; threadId++) {
+        auto& threadPairsPointer = data.threadVariantClusteringPositionPairs[threadId];
+        if(threadPairsPointer) {
+            auto& threadPairs = *threadPairsPointer;
+            // Append all pairs from this thread in bulk
+            const size_t oldSize = variantClusteringPositionPairs.size();
+            const size_t newSize = oldSize + threadPairs.size();
+            variantClusteringPositionPairs.resize(newSize);
+            std::copy(threadPairs.begin(), threadPairs.end(), 
+                        variantClusteringPositionPairs.begin() + oldSize);
+            // Free the thread-local storage immediately
+            threadPairs.remove();
+        }
+    }
+    variantClusteringPositionPairs.unreserve();
+    performanceLog << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering." << endl;
+    cout << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering." << endl;
 }

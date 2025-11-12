@@ -1080,6 +1080,10 @@ public:
         const array<OrientedReadId, 2>& orientedReadIds,
         MemoryMapped::Vector< pair<OrientedReadId, uint32_t> >& positionPairs);
 
+    void storeVariantClusteringPositionPairs(
+        size_t threadCount,
+        ComputeAlignmentsData& data);
+
 
 
 

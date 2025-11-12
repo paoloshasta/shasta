@@ -14,6 +14,7 @@
 #include "Reads.hpp"
 #include "span.hpp"
 #include "timestamp.hpp"
+#include "AssemblerVariantClustering.cpp"
 using namespace shasta;
 
 // Standard libraries.
@@ -271,7 +272,6 @@ void Assembler::computeAlignments(
     // Compute the alignments.
     data.threadAlignmentData.resize(threadCount);
     data.threadCompressedAlignments.resize(threadCount);
-    data.threadVariantClusteringPositionPairs.resize(threadCount);
     
     performanceLog << timestamp << "Alignment computation begins." << endl;
     cout << timestamp << "Alignment computation begins." << endl;
@@ -309,65 +309,15 @@ void Assembler::computeAlignments(
     compressedAlignments.unreserve();
 
 
+    if (assemblerInfo->readGraphCreationMethod == 5) {
+        // Create vector to store position pairs collected by each thread
+        data.threadVariantClusteringPositionPairs.resize(threadCount);
 
-
-    // XXX
-    // --- START OF: Position pairs for variant clustering.
-    //
-
-    // Store position pairs collected for variant clustering
-    performanceLog << timestamp << "Storing position pairs for variant clustering." << endl;
-    
-    // First, compute total number of pairs needed
-    size_t totalPairs = 0;
-    for(size_t threadId=0; threadId<threadCount; threadId++) {
-        auto& threadPairsPointer = data.threadVariantClusteringPositionPairs[threadId];
-        if(threadPairsPointer) {
-            totalPairs += threadPairsPointer->size();
-        }
+        // Store position pairs collected by each thread
+        performanceLog << timestamp << "Storing position pairs for variant clustering." << endl;
+        storeVariantClusteringPositionPairs(threadCount, data);
+        performanceLog << timestamp << "Done storing position pairs for variant clustering." << endl;
     }
-
-    // Create vector with appropriate capacity
-    variantClusteringPositionPairs.createNew(
-        largeDataName("VariantClusteringPositionPairs"), largeDataPageSize, 0, totalPairs);
-
-    // Append all pairs from each thread
-    for(size_t threadId=0; threadId<threadCount; threadId++) {
-        auto& threadPairsPointer = data.threadVariantClusteringPositionPairs[threadId];
-        if(threadPairsPointer) {
-            auto& threadPairs = *threadPairsPointer;
-            // Append all pairs from this thread in bulk
-            const size_t oldSize = variantClusteringPositionPairs.size();
-            const size_t newSize = oldSize + threadPairs.size();
-            variantClusteringPositionPairs.resize(newSize);
-            std::copy(threadPairs.begin(), threadPairs.end(), 
-                        variantClusteringPositionPairs.begin() + oldSize);
-            // Free the thread-local storage immediately
-            threadPairs.remove();
-        }
-    }
-    variantClusteringPositionPairs.unreserve();
-    performanceLog << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering." << endl;
-    cout << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering." << endl;
-
-    // // Print the first 10 position pairs
-    // cout << "First 10 position pairs for variant clustering:" << endl;
-    // for(size_t i=0; i<10; i++) {
-    //     cout << variantClusteringPositionPairs[i].first << " " << variantClusteringPositionPairs[i].second << endl;
-    // }
-    // cout << "..." << endl;
-    // cout << "Last 10 position pairs for variant clustering:" << endl;
-    // for(size_t i=variantClusteringPositionPairs.size()-10; i<variantClusteringPositionPairs.size(); i++) {
-    //     cout << variantClusteringPositionPairs[i].first << " " << variantClusteringPositionPairs[i].second << endl;
-    // }
-
-
-    // XXX
-    // --- END OF: Position pairs for variant clustering.
-    //
-
-
-
 
     // Cleanup.
     if(alignOptions.alignMethod == 4) {
