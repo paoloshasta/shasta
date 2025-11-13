@@ -14,7 +14,6 @@
 #include "Reads.hpp"
 #include "span.hpp"
 #include "timestamp.hpp"
-#include "AssemblerVariantClustering.cpp"
 using namespace shasta;
 
 // Standard libraries.
@@ -272,6 +271,10 @@ void Assembler::computeAlignments(
     // Compute the alignments.
     data.threadAlignmentData.resize(threadCount);
     data.threadCompressedAlignments.resize(threadCount);
+
+    if (assemblerInfo->readGraphCreationMethod == 5) {
+        data.threadVariantClusteringPositionPairs.resize(threadCount);
+    }
     
     performanceLog << timestamp << "Alignment computation begins." << endl;
     cout << timestamp << "Alignment computation begins." << endl;
@@ -309,15 +312,18 @@ void Assembler::computeAlignments(
     compressedAlignments.unreserve();
 
 
-    if (assemblerInfo->readGraphCreationMethod == 5) {
-        // Create vector to store position pairs collected by each thread
-        data.threadVariantClusteringPositionPairs.resize(threadCount);
 
+
+    if (assemblerInfo->readGraphCreationMethod == 5) {
         // Store position pairs collected by each thread
         performanceLog << timestamp << "Storing position pairs for variant clustering." << endl;
+        cout << timestamp << "Storing position pairs for variant clustering." << endl;
         storeVariantClusteringPositionPairs(threadCount, data);
         performanceLog << timestamp << "Done storing position pairs for variant clustering." << endl;
+        cout << timestamp << "Done storing position pairs for variant clustering." << endl;
     }
+
+
 
     // Cleanup.
     if(alignOptions.alignMethod == 4) {
@@ -420,6 +426,16 @@ void Assembler::computeAlignmentsThreadFunction(size_t threadId)
         largeDataName("tmp-ThreadGlobalCompressedAlignments-" + to_string(threadId)),
         largeDataPageSize);
 
+    if (assemblerInfo->readGraphCreationMethod == 5) {
+        // Create the vector to contain the position pairs collected by this thread.
+        shared_ptr< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > > thisThreadVariantClusteringPositionPairsPointer =
+            make_shared< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > >();
+        data.threadVariantClusteringPositionPairs[threadId] = thisThreadVariantClusteringPositionPairsPointer;
+        auto& thisThreadVariantClusteringPositionPairs = *thisThreadVariantClusteringPositionPairsPointer;
+        thisThreadVariantClusteringPositionPairs.createNew(
+            largeDataName("tmp-ThreadVariantClusteringPositionPairs-" + to_string(threadId)),
+            largeDataPageSize);
+    }
 
 #if 0
     // A vector to store the time taken to compute each alignment.
@@ -574,20 +590,13 @@ void Assembler::computeAlignmentsThreadFunction(size_t threadId)
                         continue;
                     }
 
-                    // Create the vector to contain the position pairs collected by this thread.
-                    shared_ptr< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > > thisThreadVariantClusteringPositionPairsPointer =
-                    make_shared< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > >();
-                    data.threadVariantClusteringPositionPairs[threadId] = thisThreadVariantClusteringPositionPairsPointer;
-                    auto& thisThreadVariantClusteringPositionPairs = *thisThreadVariantClusteringPositionPairsPointer;
-                    thisThreadVariantClusteringPositionPairs.createNew(largeDataName("tmp-ThreadVariantClusteringPositionPairs-" + to_string(threadId)), largeDataPageSize);
-
                     // Collect position pairs for variant clustering
                     // Only collect those with SNP differences (No indels)
                     collectVariantClusteringPositionPairs(
                         projectedAlignment,
                         orientedReadIds,
-                        thisThreadVariantClusteringPositionPairs);
-
+                        *data.threadVariantClusteringPositionPairs[threadId]
+                    );
                 }
 
                 
