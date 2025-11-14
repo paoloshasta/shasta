@@ -12,6 +12,10 @@
 
 #include "MarkerKmers.hpp"
 
+#include <array>
+#include <unordered_set>
+#include <algorithm>
+
 
 using namespace shasta;
 
@@ -489,180 +493,189 @@ void Assembler::performGlobalVariantClustering(
     }
     variantClusteringPositionPairs.unreserve();
 
+    // Sort using std::sort (works because MemoryMapped::Vector::begin/end return T*)
+    std::sort(variantClusteringFilteredPositionPairs.begin(), variantClusteringFilteredPositionPairs.end());
 
 
 
 
 
 
-    // // XXX
-    // // --- START OF: WELL-SEPARATED FILTER
-    // //     Filter out clusters of nearby SNPs (well-separated filter)
-    // //     Sequencing error and artifacts often appear as clusters of nearby SNPs.
-    // //     To avoid clusters of errors, the informative SNPs need to be well-separated.
-    // //     Only SNPs at least 32bp apart are considered.
-    // //     Since variantClusteringFilteredPositionPairs is already sorted by (OrientedReadId, position),
-    // //     positions from the same read are grouped together - we can do a single pass!
+
+    // XXX
+    // --- START OF: WELL-SEPARATED FILTER
+    //     Filter out clusters of nearby SNPs (well-separated filter)
+    //     Sequencing error and artifacts often appear as clusters of nearby SNPs.
+    //     To avoid clusters of errors, the informative SNPs need to be well-separated.
+    //     Only SNPs at least 16bp apart are considered.
+    //     Since variantClusteringFilteredPositionPairs is already sorted by (OrientedReadId, position),
+    //     positions from the same read are grouped together - we can do a single pass!
     
-    // const auto tSeparationStart = steady_clock::now();
+    const auto tSeparationStart = steady_clock::now();
 
-    // // Remember how many survived the occurrence filter.
-    // const uint64_t filteredCountBeforeSeparation = variantClusteringFilteredPositionPairs.size();
+    // Remember how many survived the occurrence filter.
+    const uint64_t filteredCountBeforeSeparation = variantClusteringFilteredPositionPairs.size();
 
-    // // --- Filter out clusters of nearby SNPs (well-separated filter) ---
-    // const uint64_t minSeparation = 32;
+    // --- Filter out clusters of nearby SNPs (well-separated filter) ---
+    const uint64_t minSeparation = 16;
 
-    // MemoryMapped::Vector<pair<OrientedReadId, uint32_t>> wellSeparatedPositionPairs;
-    // wellSeparatedPositionPairs.createNew(
-    //     largeDataName("tmp-VariantClusteringWellSeparatedPositionPairs"),
-    //     largeDataPageSize);
-    // wellSeparatedPositionPairs.reserve(variantClusteringFilteredPositionPairs.size());
+    MemoryMapped::Vector<pair<OrientedReadId, uint32_t>> wellSeparatedPositionPairs;
+    wellSeparatedPositionPairs.createNew(
+        largeDataName("tmp-VariantClusteringWellSeparatedPositionPairs"),
+        largeDataPageSize);
+    wellSeparatedPositionPairs.reserve(variantClusteringFilteredPositionPairs.size());
 
+    if (!variantClusteringFilteredPositionPairs.empty()) {
+        std::map<ReadId, uint32_t> lastKeptStrand0Position;
 
-    // if (!variantClusteringFilteredPositionPairs.empty()) {
-    //     // Track last kept canonical (strand 0) position per read.
-    //     std::unordered_map<ReadId, uint32_t> lastKeptStrand0Pos;
+        for (const auto& pair : variantClusteringFilteredPositionPairs) {
+            const OrientedReadId orientedReadId = pair.first;
+            const ReadId readId = orientedReadId.getReadId();
+            const Strand strand = orientedReadId.getStrand();
+            const uint32_t position = pair.second;
 
-    //     for (const auto& pair : variantClusteringFilteredPositionPairs) {
-    //         const OrientedReadId orientedReadId = pair.first;
-    //         const ReadId readId = orientedReadId.getReadId();
-    //         const Strand strand = orientedReadId.getStrand();
+            // Only process strand-0 pairs; strand-1 pairs will be synthesized
+            if (strand != 0) {
+                continue;
+            }
 
-    //         if (strand != 0) {
-    //             continue;   // decisions are made on strand-0 entries only
-    //         }
+            const uint64_t readLength = getReads().getReadRawSequenceLength(readId);
 
-    //         const uint32_t position = pair.second;
-    //         const uint64_t readLength = getReads().getReadRawSequenceLength(readId);
+            auto it = lastKeptStrand0Position.find(readId);
+            if (it == lastKeptStrand0Position.end()) {
+                // First strand-0 position for this read
+                wellSeparatedPositionPairs.push_back(pair);
+                lastKeptStrand0Position[readId] = position;
+                
+                // Synthesize the corresponding strand-1 pair
+                const OrientedReadId rcId(readId, Strand(1));
+                const uint32_t rcPosition = uint32_t(readLength - 1 - position);
+                wellSeparatedPositionPairs.push_back(std::make_pair(rcId, rcPosition));
+                continue;
+            }
 
-    //         auto [it, inserted] = lastKeptStrand0Pos.try_emplace(readId, position);
-    //         bool keep = false;
+            const uint32_t lastPos = it->second;
+            const uint32_t distance = position - lastPos;  // Positions are sorted
 
-    //         if (inserted) {
-    //             keep = true;           // first canonical position for this read
-    //         } else {
-    //             const uint32_t lastPos = it->second;
-    //             const uint32_t distance =
-    //                 position > lastPos ? position - lastPos : lastPos - position;
-    //             if (distance == 0 || distance >= minSeparation) {
-    //                 keep = true;
-    //             }
-    //         }
+            // Keep if ≥ minSeparation bp away
+            if (distance >= minSeparation) {
+                wellSeparatedPositionPairs.push_back(pair);
+                it->second = position;
+                
+                // Synthesize the corresponding strand-1 pair
+                const OrientedReadId rcId(readId, Strand(1));
+                const uint32_t rcPosition = uint32_t(readLength - 1 - position);
+                wellSeparatedPositionPairs.push_back(std::make_pair(rcId, rcPosition));
+            }
+        }
+    }
 
-    //         if (keep) {
-    //             it->second = position;
-    //             wellSeparatedPositionPairs.push_back(pair);
-
-    //             // Also push the reverse-complement view for this genomic position.
-    //             const OrientedReadId rcId(readId, Strand(1));
-    //             const uint32_t rcPosition = uint32_t(readLength - 1 - position);
-    //             wellSeparatedPositionPairs.push_back(std::make_pair(rcId, rcPosition));
-    //         }
-    //     }
-    // }
-
-
-    // const uint64_t wellSeparatedCount = wellSeparatedPositionPairs.size();
-    // const uint64_t wellSeparatedFilteredOut = filteredCountBeforeSeparation - wellSeparatedCount;
-
-    // std::cout << "After well-separated filter (min separation="
-    //             << minSeparation << "bp): " << wellSeparatedCount
-    //             << " position pairs" << std::endl;
-    // std::cout << "  Filtered out " << wellSeparatedFilteredOut
-    //             << " position pairs within " << minSeparation
-    //             << "bp of adjacent positions" << std::endl;
-
-    // const auto tSeparationEnd = steady_clock::now();
-    // const double tSeparation = seconds(tSeparationEnd - tSeparationStart);
+    // Sort using std::sort (works because MemoryMapped::Vector::begin/end return T*)
+    std::sort(wellSeparatedPositionPairs.begin(), wellSeparatedPositionPairs.end());
 
 
-    // // Sanity check: each canonical position should have both strand views
-    // {
-    //     struct PairHash {
-    //         size_t operator()(const std::pair<ReadId, uint32_t>& k) const noexcept {
-    //             return std::hash<ReadId>()(k.first) ^ (std::hash<uint32_t>()(k.second) << 1);
-    //         }
-    //     };
 
-    //     std::unordered_map<std::pair<ReadId, uint32_t>, uint8_t, PairHash> viewMask;
-    //     viewMask.reserve(wellSeparatedPositionPairs.size());
+    const uint64_t wellSeparatedCount = wellSeparatedPositionPairs.size();
+    const uint64_t wellSeparatedFilteredOut = filteredCountBeforeSeparation - wellSeparatedCount;
 
-    //     for (const auto& p : wellSeparatedPositionPairs) {
-    //         const ReadId readId = p.first.getReadId();
-    //         const Strand strand = p.first.getStrand();
-    //         const uint32_t position = p.second;
-    //         const uint64_t readLength = getReads().getReadRawSequenceLength(readId);
-    //         const uint32_t strand0Pos = (strand == 0) ? position : uint32_t(readLength - 1 - position);
+    std::cout << "After well-separated filter (min separation="
+                << minSeparation << "bp): " << wellSeparatedCount
+                << " position pairs" << std::endl;
+    std::cout << "  Filtered out " << wellSeparatedFilteredOut
+                << " position pairs within " << minSeparation
+                << "bp of adjacent positions" << std::endl;
 
-    //         auto& mask = viewMask[{readId, strand0Pos}];
-    //         mask |= (1u << strand);   // bit 0 for strand 0, bit 1 for strand 1
-    //     }
-
-    //     uint64_t missingViews = 0;
-    //     for (const auto& [key, mask] : viewMask) {
-    //         if (mask != 0b11) {
-    //             ++missingViews;
-    //             if (missingViews <= 20) {
-    //                 const ReadId readId = key.first;
-    //                 const uint32_t strand0Pos = key.second;
-    //                 const uint64_t readLength = getReads().getReadRawSequenceLength(readId);
-    //                 cout << "Missing reverse-complement view for read " << readId
-    //                     << " canonical position " << strand0Pos
-    //                     << " → expected strand 0:" << strand0Pos
-    //                     << " and strand 1:" << (readLength - 1 - strand0Pos) << endl;
-    //             }
-    //         }
-    //     }
-
-    //     if (missingViews == 0) {
-    //         cout << "✓ Sanity check: every canonical position has both strand views. Checked " << viewMask.size() << " canonical positions." << endl;
-    //     } else {
-    //         cout << "✗ WARNING: " << missingViews
-    //             << " canonical positions lost a strand view after filtering. Checked " << viewMask.size() << " canonical positions." << endl;
-    //     }
-
-    //     // count how many pairs are in 0th strand and how many are in 1st strand
-    //     uint64_t count0 = 0;
-    //     uint64_t count1 = 0;
-    //     for (const auto& pair : wellSeparatedPositionPairs) {
-    //         if (pair.first.getStrand() == 0) {
-    //             ++count0;
-    //         } else {
-    //             ++count1;
-    //         }
-    //     }
-    //     cout << "Number of pairs in 0th strand: " << count0 << endl;
-    //     cout << "Number of pairs in 1st strand: " << count1 << endl;
-
-    //     // // Print all pairs that contain readId 0
-    //     // for (const auto& pair : wellSeparatedPositionPairs) {
-    //     //     if (pair.first.getReadId() == 0) {
-    //     //         cout << pair.first << ":" << pair.second << endl;
-    //     //     }
-    //     // }
-    // }
-
-
-    // const auto tDeduplicateEnd = steady_clock::now();
-    // const double tDeduplicate = seconds(tDeduplicateEnd - tDeduplicateStart);
-    // cout << "  Occurrence filter time: " << tOccurrence << " s" << endl;
-    // cout << "  Well-separated filter time: " << tSeparation << " s" << endl;
-    // performanceLog << timestamp << "Occurrence filter time " << tOccurrence << " s" << endl;
-    // performanceLog << timestamp << "Well-separated filter time " << tSeparation << " s" << endl;
-
-
-    // // Replace the memory-mapped vector with filtered results
-    // variantClusteringPositionPairs.clear();
-    // variantClusteringPositionPairs.reserve(wellSeparatedPositionPairs.size());
-    // for (const auto& pair : wellSeparatedPositionPairs) {
-    //     variantClusteringPositionPairs.push_back(pair);
-    // }
-    // variantClusteringPositionPairs.unreserve();
+    const auto tSeparationEnd = steady_clock::now();
+    const double tSeparation = seconds(tSeparationEnd - tSeparationStart);
 
     
-    // // XXX
-    // // --- END OF: WELL-SEPARATED FILTER
-    // // 
+    // DEBUG: check if each canonical position has both strand views
+    {
+        struct PairHash {
+            size_t operator()(const std::pair<ReadId, uint32_t>& k) const noexcept {
+                return std::hash<ReadId>()(k.first) ^ (std::hash<uint32_t>()(k.second) << 1);
+            }
+        };
+
+        std::unordered_map<std::pair<ReadId, uint32_t>, uint8_t, PairHash> viewMask;
+        viewMask.reserve(wellSeparatedPositionPairs.size());
+
+        for (const auto& p : wellSeparatedPositionPairs) {
+            const ReadId readId = p.first.getReadId();
+            const Strand strand = p.first.getStrand();
+            const uint32_t position = p.second;
+            const uint64_t readLength = getReads().getReadRawSequenceLength(readId);
+            const uint32_t strand0Pos = (strand == 0) ? position : uint32_t(readLength - 1 - position);
+
+            auto& mask = viewMask[{readId, strand0Pos}];
+            mask |= (1u << strand);   // bit 0 for strand 0, bit 1 for strand 1
+        }
+
+        uint64_t missingViews = 0;
+        for (const auto& [key, mask] : viewMask) {
+            if (mask != 0b11) {
+                ++missingViews;
+                if (missingViews <= 20) {
+                    const ReadId readId = key.first;
+                    const uint32_t strand0Pos = key.second;
+                    const uint64_t readLength = getReads().getReadRawSequenceLength(readId);
+                    cout << "Missing reverse-complement view for read " << readId
+                        << " canonical position " << strand0Pos
+                        << " → expected strand 0:" << strand0Pos
+                        << " and strand 1:" << (readLength - 1 - strand0Pos) << endl;
+                }
+            }
+        }
+
+        if (missingViews == 0) {
+            cout << "✓ Sanity check: every canonical position has both strand views. Checked " << viewMask.size() << " canonical positions." << endl;
+        } else {
+            cout << "✗ WARNING: " << missingViews
+                << " canonical positions lost a strand view after filtering. Checked " << viewMask.size() << " canonical positions." << endl;
+        }
+
+        // count how many pairs are in 0th strand and how many are in 1st strand
+        uint64_t count0 = 0;
+        uint64_t count1 = 0;
+        for (const auto& pair : wellSeparatedPositionPairs) {
+            if (pair.first.getStrand() == 0) {
+                ++count0;
+            } else {
+                ++count1;
+            }
+        }
+        cout << "Number of pairs in 0th strand: " << count0 << endl;
+        cout << "Number of pairs in 1st strand: " << count1 << endl;
+
+        // // Print all pairs that contain readId 0
+        // for (const auto& pair : wellSeparatedPositionPairs) {
+        //     if (pair.first.getReadId() == 0) {
+        //         cout << pair.first << ":" << pair.second << endl;
+        //     }
+        // }
+    }
+
+
+    const auto tDeduplicateEnd = steady_clock::now();
+    const double tDeduplicate = seconds(tDeduplicateEnd - tDeduplicateStart);
+    cout << "  Occurrence filter time: " << tOccurrence << " s" << endl;
+    cout << "  Well-separated filter time: " << tSeparation << " s" << endl;
+    performanceLog << timestamp << "Occurrence filter time " << tOccurrence << " s" << endl;
+    performanceLog << timestamp << "Well-separated filter time " << tSeparation << " s" << endl;
+
+
+    // Replace the memory-mapped vector with filtered results
+    variantClusteringPositionPairs.clear();
+    variantClusteringPositionPairs.reserve(wellSeparatedPositionPairs.size());
+    for (const auto& pair : wellSeparatedPositionPairs) {
+        variantClusteringPositionPairs.push_back(pair);
+    }
+    variantClusteringPositionPairs.unreserve();
+
+    
+    // XXX
+    // --- END OF: WELL-SEPARATED FILTER
+    // 
 
 
 
@@ -853,6 +866,124 @@ void Assembler::performGlobalVariantClustering(
 
     const auto tIdentifyClustersEnd = steady_clock::now();
     const double tIdentifyClusters = seconds(tIdentifyClustersEnd - tIdentifyClustersStart);
+
+
+
+
+    
+    // DEBUG: Print all clusters containing read 0-0
+    cout << "\n=== DEBUG: Clusters containing read 0-0 ===" << endl;
+    const OrientedReadId debugRead(0, 0);
+    
+    // Build a map from representative ID to cluster index for quick lookup
+    std::map<uint64_t, size_t> repToClusterIdx;
+    for(size_t i = 0; i < variantClusteringClusterRepresentatives.size(); i++) {
+        repToClusterIdx[variantClusteringClusterRepresentatives[i]] = i;
+    }
+    
+    // Build clusters: map from cluster index to member IDs
+    std::vector<std::vector<uint64_t>> clusterMembers(variantClusteringClusterRepresentatives.size());
+    for(uint64_t id = 0; id < disjointSetCount; id++) {
+        const uint64_t rep = variantClusteringDisjointSets->find(id);
+        auto it = repToClusterIdx.find(rep);
+        if(it != repToClusterIdx.end()) {
+            clusterMembers[it->second].push_back(id);
+        }
+    }
+    
+    // Find and print clusters containing read 0-0
+    uint64_t clustersWithDebugRead = 0;
+    for(size_t clusterIdx = 0; clusterIdx < variantClusteringClusterRepresentatives.size(); clusterIdx++) {
+        const auto& members = clusterMembers[clusterIdx];
+        
+        // Check if this cluster contains read 0-0
+        bool containsDebugRead = false;
+        for(uint64_t id : members) {
+            const auto& posPair = variantClusteringPositionPairs[id];
+            if(posPair.first == debugRead) {
+                containsDebugRead = true;
+                break;
+            }
+        }
+        
+        if(!containsDebugRead) {
+            continue;
+        }
+        
+        clustersWithDebugRead++;
+        const uint64_t rep = variantClusteringClusterRepresentatives[clusterIdx];
+        
+        // Count total unique reads and reads per allele
+        std::unordered_set<uint32_t> allReads;
+        std::array<std::unordered_set<uint32_t>, 5> readsByAllele; // A, C, G, T, and gap
+        
+        for(uint64_t id : members) {
+            const auto& posPair = variantClusteringPositionPairs[id];
+            const uint32_t ridVal = posPair.first.getValue();
+            allReads.insert(ridVal);
+            
+            if(id < variantClusteringPositionPairAlleles.size()) {
+                const uint8_t allele = variantClusteringPositionPairAlleles[id];
+                if(allele < 5) {
+                    readsByAllele[allele].insert(ridVal);
+                }
+            }
+        }
+        
+        // Check if this cluster has at least 2 alleles with coverage >= 4
+        uint64_t eligibleAlleles = 0;
+        for(uint8_t a = 0; a < 5; a++) {
+            if(readsByAllele[a].size() >= 4) {
+                eligibleAlleles++;
+            }
+        }
+        
+        if(eligibleAlleles < 2) {
+            continue;  // Skip clusters that don't meet the criteria
+        }
+        
+        cout << "\nCluster " << clusterIdx << " (rep=" << rep << "):" << endl;
+        cout << "  Total position pairs: " << members.size() << endl;
+        cout << "  Total unique reads: " << allReads.size() << endl;
+        cout << "  Reads per allele:";
+        for(uint8_t a = 0; a < 5; a++) {
+            if(readsByAllele[a].size() > 0) {
+                const char alleleChar = Base::fromInteger(a).character();
+                cout << " " << alleleChar << "=" << readsByAllele[a].size();
+            }
+        }
+        cout << endl;
+        
+        // Print all position pairs in this cluster
+        cout << "  Position pairs:" << endl;
+        const size_t maxPairsToShow = std::min(size_t(20), members.size());
+        for(size_t i = 0; i < maxPairsToShow; i++) {
+            const uint64_t id = members[i];
+            const auto& posPair = variantClusteringPositionPairs[id];
+            const uint8_t allele = (id < variantClusteringPositionPairAlleles.size()) 
+                                    ? variantClusteringPositionPairAlleles[id] : 4;
+            const char alleleChar = (allele == 0) ? 'A' : (allele == 1) ? 'C' : 
+                                    (allele == 2) ? 'G' : (allele == 3) ? 'T' : '?';
+            
+            cout << "    [" << i << "] ReadId=" << posPair.first.getReadId()
+                 << " Strand=" << posPair.first.getStrand()
+                 << " Pos=" << posPair.second
+                 << " Allele=" << alleleChar << endl;
+        }
+        if(members.size() > maxPairsToShow) {
+            cout << "    ... (" << (members.size() - maxPairsToShow) << " more pairs)" << endl;
+        }
+    }
+    
+    if(clustersWithDebugRead == 0) {
+        cout << "No clusters found containing read 0-0" << endl;
+    } else {
+        cout << "\nTotal clusters containing read 0-0: " << clustersWithDebugRead << endl;
+    }
+    cout << "=== END DEBUG ===" << endl << endl;
+
+
+
     
     // Print timing summary
     const auto tTotalEnd = steady_clock::now();

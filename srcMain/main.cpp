@@ -1162,40 +1162,44 @@ void shasta::main::mode3Assembly(
     // The marker length must be even.
     SHASTA_ASSERT((assembler.assemblerInfo->k %2) == 0);
 
-    // Create marker graph vertices.
-    // To create a complete marker graph, generate all vertices
-    // regardless of coverage, and allow duplicate markers on vertices.
-    assembler.createMarkerGraphVertices(
-        1,                                              // minVertexCoverage
-        std::numeric_limits<uint64_t>::max(),           // maxVertexCoverage
-        0,                                              // minVertexCoveragePerStrand
-        true,                                           // allowDuplicateMarkers
-        std::numeric_limits<double>::signaling_NaN(),   // For peak finder, unused because minVertexCoverage is not 0.
-        invalid<uint64_t>,                              // For peak finder, unused because minVertexCoverage is not 0.
-        threadCount);
+    // Declare anchors pointer here to avoid scope issues
+    shared_ptr<mode3::Anchors> anchors;
 
-    // If the coverage range for primary marker graph edges (anchors) is not
-    // specified, use the disjoint sets histogram to compute reasonable values.
-    uint64_t minPrimaryCoverage = assemblerOptions.assemblyOptions.mode3Options.minAnchorCoverage;
-    uint64_t maxPrimaryCoverage = assemblerOptions.assemblyOptions.mode3Options.maxAnchorCoverage;
-    if((minPrimaryCoverage == 0) and (maxPrimaryCoverage == 0)) {
-        tie(minPrimaryCoverage, maxPrimaryCoverage) = assembler.getPrimaryCoverageRange();
-        cout << "Automatically determined: minAnchorCoverage = " << minPrimaryCoverage <<
-            ", maxAnchorCoverage = " << maxPrimaryCoverage << endl;
-        minPrimaryCoverage = uint64_t(std::round(
-            double(minPrimaryCoverage) * assemblerOptions.assemblyOptions.mode3Options.minAnchorCoverageMultiplier));
-        maxPrimaryCoverage = uint64_t(std::round(
-            double(maxPrimaryCoverage) * assemblerOptions.assemblyOptions.mode3Options.maxAnchorCoverageMultiplier));
-        cout << "After applying specified multipliers: minAnchorCoverage = " << minPrimaryCoverage <<
-            ", maxAnchorCoverage = " << maxPrimaryCoverage << endl;
-    } else {
-        cout << "Using minAnchorCoverage = " << minPrimaryCoverage <<
-            ", maxAnchorCoverage = " << maxPrimaryCoverage << endl;
-    }
+    if (assemblerOptions.readGraphOptions.creationMethod != 5) {
 
-    // Construct the mode3::Anchors.
-    shared_ptr<mode3::Anchors> anchors =
-        make_shared<mode3::Anchors>(
+        // Create marker graph vertices.
+        // To create a complete marker graph, generate all vertices
+        // regardless of coverage, and allow duplicate markers on vertices.
+        assembler.createMarkerGraphVertices(
+            1,                                              // minVertexCoverage
+            std::numeric_limits<uint64_t>::max(),           // maxVertexCoverage
+            0,                                              // minVertexCoveragePerStrand
+            true,                                           // allowDuplicateMarkers
+            std::numeric_limits<double>::signaling_NaN(),   // For peak finder, unused because minVertexCoverage is not 0.
+            invalid<uint64_t>,                              // For peak finder, unused because minVertexCoverage is not 0.
+            threadCount);
+
+        // If the coverage range for primary marker graph edges (anchors) is not
+        // specified, use the disjoint sets histogram to compute reasonable values.
+        uint64_t minPrimaryCoverage = assemblerOptions.assemblyOptions.mode3Options.minAnchorCoverage;
+        uint64_t maxPrimaryCoverage = assemblerOptions.assemblyOptions.mode3Options.maxAnchorCoverage;
+        if((minPrimaryCoverage == 0) and (maxPrimaryCoverage == 0)) {
+            tie(minPrimaryCoverage, maxPrimaryCoverage) = assembler.getPrimaryCoverageRange();
+            cout << "Automatically determined: minAnchorCoverage = " << minPrimaryCoverage <<
+                ", maxAnchorCoverage = " << maxPrimaryCoverage << endl;
+            minPrimaryCoverage = uint64_t(std::round(
+                double(minPrimaryCoverage) * assemblerOptions.assemblyOptions.mode3Options.minAnchorCoverageMultiplier));
+            maxPrimaryCoverage = uint64_t(std::round(
+                double(maxPrimaryCoverage) * assemblerOptions.assemblyOptions.mode3Options.maxAnchorCoverageMultiplier));
+            cout << "After applying specified multipliers: minAnchorCoverage = " << minPrimaryCoverage <<
+                ", maxAnchorCoverage = " << maxPrimaryCoverage << endl;
+        } else {
+            cout << "Using minAnchorCoverage = " << minPrimaryCoverage <<
+                ", maxAnchorCoverage = " << maxPrimaryCoverage << endl;
+        }
+
+        // Construct the mode3::Anchors from marker graph.
+        anchors = make_shared<mode3::Anchors>(
             MappedMemoryOwner(assembler),
             assembler.getReads(),
             assembler.assemblerInfo->k,
@@ -1205,21 +1209,42 @@ void shasta::main::mode3Assembly(
             maxPrimaryCoverage,
             threadCount);
 
-    // We no longer need the MarkerGraph vertices.
-    // We can remove them here, unless --MarkerGraph.alwaysSave is in effect,
-    // in which case we also need to complete creation of the marker graph
-    // (at a substantial additional memory cost).
-    if(assemblerOptions.markerGraphOptions.alwaysSave) {
-        assembler.findMarkerGraphReverseComplementVertices(threadCount);
-        assembler.createMarkerGraphEdgesStrict(
-            minPrimaryCoverage,
-            0, threadCount);
-        assembler.findMarkerGraphReverseComplementEdges(threadCount);
-    } else {
-        // This is the standard path.
-        assembler.markerGraph.vertices().remove();
-        assembler.markerGraph.vertexTable.remove();
+        // We no longer need the MarkerGraph vertices.
+        // We can remove them here, unless --MarkerGraph.alwaysSave is in effect,
+        // in which case we also need to complete creation of the marker graph
+        // (at a substantial additional memory cost).
+        if(assemblerOptions.markerGraphOptions.alwaysSave) {
+            assembler.findMarkerGraphReverseComplementVertices(threadCount);
+            assembler.createMarkerGraphEdgesStrict(
+                minPrimaryCoverage,
+                0, threadCount);
+            assembler.findMarkerGraphReverseComplementEdges(threadCount);
+        } else {
+            // This is the standard path.
+            assembler.markerGraph.vertices().remove();
+            assembler.markerGraph.vertexTable.remove();
+        }
+    
+    } else if (assemblerOptions.readGraphOptions.creationMethod == 5) {
+
+        // cout << timestamp << "Creating anchors from het sites using variantclustering data." << endl;
+        // anchors = make_shared<mode3::Anchors>(
+        //     MappedMemoryOwner(assembler),
+        //     assembler.getReads(),
+        //     assembler.assemblerInfo->k,
+        //     assembler.markers,
+        //     assembler.variantClusteringClusterRepresentatives,
+        //     *assembler.variantClusteringDisjointSets,
+        //     assembler.variantClusteringPositionPairs,
+        //     assembler.variantClusteringPositionPairAlleles,
+        //     assembler.variantClusteringPositionPairContexts,
+        //     /*minCoverageTotal*/ 6,
+        //     /*minReadsPerAllele*/ 3,
+        //     threadCount);
+    
     }
+
+    
 
     // Compute oriented read journeys.
     anchors->computeJourneys(threadCount);
