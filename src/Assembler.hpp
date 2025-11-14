@@ -209,6 +209,13 @@ public:
 };
 
 
+namespace shasta {
+    // Compact context for a position pair: prev/next marker infos
+    struct VariantPositionContext {
+        MarkerKmers::MarkerInfo prevMarkerInfo;
+        MarkerKmers::MarkerInfo nextMarkerInfo;
+    };
+}
 
 class shasta::Assembler :
     public MultithreadedObject<Assembler>,
@@ -1089,12 +1096,6 @@ public:
         uint64_t minCoverage,
         uint64_t maxCoverage,
         size_t threadCount = 0);
-
-    // Compact context for a position pair: prev/next marker infos
-    struct VariantPositionContext {
-        MarkerKmers::MarkerInfo prevMarkerInfo;
-        MarkerKmers::MarkerInfo nextMarkerInfo;
-    };
 
     MemoryMapped::Vector<__uint128_t> variantClusteringDisjointSetTable;
     MemoryMapped::Vector<uint8_t> variantClusteringPositionPairAlleles;

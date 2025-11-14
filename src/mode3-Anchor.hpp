@@ -18,6 +18,9 @@
 #include "memory.hpp"
 #include "span.hpp"
 
+// Include DisjointSets for the het sites constructor
+#include "dset64-gccAtomic.hpp"
+
 
 
 namespace shasta {
@@ -28,7 +31,6 @@ namespace shasta {
     class MarkerInterval;
     class Reads;
     struct VariantPositionContext;
-
 
     // The main input to mode 3 assembly is a set of anchors.
     // Each anchor consists of a span of AnchorMarkerInterval, with the following requirements:

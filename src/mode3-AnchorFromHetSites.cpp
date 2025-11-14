@@ -243,10 +243,10 @@ void Anchors::constructFromHetSitesThreadFunction(uint64_t threadId)
         }
     }
     
-    // DEBUG: Print summary for this thread
-    cout << "Thread " << threadId << " summary:" << endl;
-    cout << "  Clusters processed: " << clustersProcessed << endl;
-    cout << "  Clusters skipped (duplicates): " << clustersSkippedDuplicate << endl;
-    cout << "  Clusters skipped (strand-1 lowest): " << clustersSkippedStrand1Lowest << endl;
-    cout << "  Total clusters skipped: " << clustersSkipped << endl;
+    // // DEBUG: Print summary for this thread
+    // cout << "Thread " << threadId << " summary:" << endl;
+    // cout << "  Clusters processed: " << clustersProcessed << endl;
+    // cout << "  Clusters skipped (duplicates): " << clustersSkippedDuplicate << endl;
+    // cout << "  Clusters skipped (strand-1 lowest): " << clustersSkippedStrand1Lowest << endl;
+    // cout << "  Total clusters skipped: " << clustersSkipped << endl;
 }
