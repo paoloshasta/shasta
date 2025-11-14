@@ -27,6 +27,7 @@ namespace shasta {
     class MarkerGraph;
     class MarkerInterval;
     class Reads;
+    struct VariantPositionContext;
 
 
     // The main input to mode 3 assembly is a set of anchors.
@@ -143,6 +144,21 @@ public:
         const vector<string>& jsonFileNames,
         uint64_t minPrimaryCoverage,
         uint64_t maxPrimaryCoverage,
+        uint64_t threadCount);
+
+    // This constructor creates the Anchors from heterozygous sites (variant clustering).
+    Anchors(
+        const MappedMemoryOwner&,
+        const Reads& reads,
+        uint64_t k,
+        const MemoryMapped::VectorOfVectors<CompressedMarker, uint64_t>& markers,
+        const std::vector<uint64_t>& clusterRepresentatives,
+        DisjointSets& disjointSets,
+        const MemoryMapped::Vector<std::pair<OrientedReadId, uint32_t>>& positionPairs,
+        const MemoryMapped::Vector<uint8_t>& positionPairAlleles,
+        const MemoryMapped::Vector<VariantPositionContext>& positionPairContexts,
+        uint64_t minClusterCoverage,
+        uint64_t minAlleleCoverage,
         uint64_t threadCount);
 
     // This constructor access existing Anchors.
@@ -326,6 +342,31 @@ private:
     };
     ConstructFromMarkerKmersData constructFromMarkerKmersData;
     void constructFromMarkerKmersThreadFunction(uint64_t threadId);
+
+    // Data and functions used when constructing the Anchors from het sites using variant clustering.
+    // New code that gets the Kmers from VariantClustering.
+    class ConstructFromHetSitesData {
+    public:
+        uint64_t minClusterCoverage;
+        uint64_t minAlleleCoverage;
+        
+
+        const std::vector<uint64_t>* clusterRepresentatives;
+        DisjointSets* disjointSets;
+        std::vector< std::vector<uint64_t> > membersByRepIdx;
+
+        const MemoryMapped::Vector< std::pair<OrientedReadId, uint32_t> >* positionPairs;
+        const MemoryMapped::Vector<uint8_t>* positionPairAlleles;
+        const MemoryMapped::Vector<VariantPositionContext>* positionPairContexts;
+
+        // The MarkerInfo objects for the candidate anchors found by each thread.
+        using MarkerInfo = MarkerKmers::MarkerInfo;
+
+        // The anchors found by each thread.
+        vector< shared_ptr<MemoryMapped::VectorOfVectors<MarkerInfo, uint64_t> > > threadAnchors;
+    };
+    ConstructFromHetSitesData constructFromHetSitesData;
+    void constructFromHetSitesThreadFunction(uint64_t threadId);
 
 
 #if 0

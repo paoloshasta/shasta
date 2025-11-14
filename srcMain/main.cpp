@@ -1227,20 +1227,20 @@ void shasta::main::mode3Assembly(
     
     } else if (assemblerOptions.readGraphOptions.creationMethod == 5) {
 
-        // cout << timestamp << "Creating anchors from het sites using variantclustering data." << endl;
-        // anchors = make_shared<mode3::Anchors>(
-        //     MappedMemoryOwner(assembler),
-        //     assembler.getReads(),
-        //     assembler.assemblerInfo->k,
-        //     assembler.markers,
-        //     assembler.variantClusteringClusterRepresentatives,
-        //     *assembler.variantClusteringDisjointSets,
-        //     assembler.variantClusteringPositionPairs,
-        //     assembler.variantClusteringPositionPairAlleles,
-        //     assembler.variantClusteringPositionPairContexts,
-        //     /*minCoverageTotal*/ 6,
-        //     /*minReadsPerAllele*/ 3,
-        //     threadCount);
+        cout << timestamp << "Creating anchors from het sites using variantclustering data." << endl;
+        anchors = make_shared<mode3::Anchors>(
+            MappedMemoryOwner(assembler),
+            assembler.getReads(),
+            assembler.assemblerInfo->k,
+            assembler.markers,
+            assembler.variantClusteringClusterRepresentatives,
+            *assembler.variantClusteringDisjointSets,
+            assembler.variantClusteringPositionPairs,
+            assembler.variantClusteringPositionPairAlleles,
+            assembler.variantClusteringPositionPairContexts,
+            /*minClusterCoverage*/ 6,
+            /*minAlleleCoverage*/ 3,
+            threadCount);
     
     }
 

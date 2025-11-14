@@ -870,118 +870,118 @@ void Assembler::performGlobalVariantClustering(
 
 
 
-    
-    // DEBUG: Print all clusters containing read 0-0
-    cout << "\n=== DEBUG: Clusters containing read 0-0 ===" << endl;
-    const OrientedReadId debugRead(0, 0);
-    
-    // Build a map from representative ID to cluster index for quick lookup
-    std::map<uint64_t, size_t> repToClusterIdx;
-    for(size_t i = 0; i < variantClusteringClusterRepresentatives.size(); i++) {
-        repToClusterIdx[variantClusteringClusterRepresentatives[i]] = i;
-    }
-    
-    // Build clusters: map from cluster index to member IDs
-    std::vector<std::vector<uint64_t>> clusterMembers(variantClusteringClusterRepresentatives.size());
-    for(uint64_t id = 0; id < disjointSetCount; id++) {
-        const uint64_t rep = variantClusteringDisjointSets->find(id);
-        auto it = repToClusterIdx.find(rep);
-        if(it != repToClusterIdx.end()) {
-            clusterMembers[it->second].push_back(id);
-        }
-    }
-    
-    // Find and print clusters containing read 0-0
-    uint64_t clustersWithDebugRead = 0;
-    for(size_t clusterIdx = 0; clusterIdx < variantClusteringClusterRepresentatives.size(); clusterIdx++) {
-        const auto& members = clusterMembers[clusterIdx];
+    {
+        // DEBUG: Print all clusters containing read 0-0
+        cout << "\n=== DEBUG: Clusters containing read 0-0 ===" << endl;
+        const OrientedReadId debugRead(0, 0);
         
-        // Check if this cluster contains read 0-0
-        bool containsDebugRead = false;
-        for(uint64_t id : members) {
-            const auto& posPair = variantClusteringPositionPairs[id];
-            if(posPair.first == debugRead) {
-                containsDebugRead = true;
-                break;
+        // Build a map from representative ID to cluster index for quick lookup
+        std::map<uint64_t, size_t> repToClusterIdx;
+        for(size_t i = 0; i < variantClusteringClusterRepresentatives.size(); i++) {
+            repToClusterIdx[variantClusteringClusterRepresentatives[i]] = i;
+        }
+        
+        // Build clusters: map from cluster index to member IDs
+        std::vector<std::vector<uint64_t>> clusterMembers(variantClusteringClusterRepresentatives.size());
+        for(uint64_t id = 0; id < disjointSetCount; id++) {
+            const uint64_t rep = variantClusteringDisjointSets->find(id);
+            auto it = repToClusterIdx.find(rep);
+            if(it != repToClusterIdx.end()) {
+                clusterMembers[it->second].push_back(id);
             }
         }
         
-        if(!containsDebugRead) {
-            continue;
-        }
-        
-        clustersWithDebugRead++;
-        const uint64_t rep = variantClusteringClusterRepresentatives[clusterIdx];
-        
-        // Count total unique reads and reads per allele
-        std::unordered_set<uint32_t> allReads;
-        std::array<std::unordered_set<uint32_t>, 5> readsByAllele; // A, C, G, T, and gap
-        
-        for(uint64_t id : members) {
-            const auto& posPair = variantClusteringPositionPairs[id];
-            const uint32_t ridVal = posPair.first.getValue();
-            allReads.insert(ridVal);
+        // Find and print clusters containing read 0-0
+        uint64_t clustersWithDebugRead = 0;
+        for(size_t clusterIdx = 0; clusterIdx < variantClusteringClusterRepresentatives.size(); clusterIdx++) {
+            const auto& members = clusterMembers[clusterIdx];
             
-            if(id < variantClusteringPositionPairAlleles.size()) {
-                const uint8_t allele = variantClusteringPositionPairAlleles[id];
-                if(allele < 5) {
-                    readsByAllele[allele].insert(ridVal);
+            // Check if this cluster contains read 0-0
+            bool containsDebugRead = false;
+            for(uint64_t id : members) {
+                const auto& posPair = variantClusteringPositionPairs[id];
+                if(posPair.first == debugRead) {
+                    containsDebugRead = true;
+                    break;
                 }
             }
-        }
-        
-        // Check if this cluster has at least 2 alleles with coverage >= 4
-        uint64_t eligibleAlleles = 0;
-        for(uint8_t a = 0; a < 5; a++) {
-            if(readsByAllele[a].size() >= 4) {
-                eligibleAlleles++;
-            }
-        }
-        
-        if(eligibleAlleles < 2) {
-            continue;  // Skip clusters that don't meet the criteria
-        }
-        
-        cout << "\nCluster " << clusterIdx << " (rep=" << rep << "):" << endl;
-        cout << "  Total position pairs: " << members.size() << endl;
-        cout << "  Total unique reads: " << allReads.size() << endl;
-        cout << "  Reads per allele:";
-        for(uint8_t a = 0; a < 5; a++) {
-            if(readsByAllele[a].size() > 0) {
-                const char alleleChar = Base::fromInteger(a).character();
-                cout << " " << alleleChar << "=" << readsByAllele[a].size();
-            }
-        }
-        cout << endl;
-        
-        // Print all position pairs in this cluster
-        cout << "  Position pairs:" << endl;
-        const size_t maxPairsToShow = std::min(size_t(20), members.size());
-        for(size_t i = 0; i < maxPairsToShow; i++) {
-            const uint64_t id = members[i];
-            const auto& posPair = variantClusteringPositionPairs[id];
-            const uint8_t allele = (id < variantClusteringPositionPairAlleles.size()) 
-                                    ? variantClusteringPositionPairAlleles[id] : 4;
-            const char alleleChar = (allele == 0) ? 'A' : (allele == 1) ? 'C' : 
-                                    (allele == 2) ? 'G' : (allele == 3) ? 'T' : '?';
             
-            cout << "    [" << i << "] ReadId=" << posPair.first.getReadId()
-                 << " Strand=" << posPair.first.getStrand()
-                 << " Pos=" << posPair.second
-                 << " Allele=" << alleleChar << endl;
+            if(!containsDebugRead) {
+                continue;
+            }
+            
+            clustersWithDebugRead++;
+            const uint64_t rep = variantClusteringClusterRepresentatives[clusterIdx];
+            
+            // Count total unique reads and reads per allele
+            std::unordered_set<uint32_t> allReads;
+            std::array<std::unordered_set<uint32_t>, 5> readsByAllele; // A, C, G, T, and gap
+            
+            for(uint64_t id : members) {
+                const auto& posPair = variantClusteringPositionPairs[id];
+                const uint32_t ridVal = posPair.first.getValue();
+                allReads.insert(ridVal);
+                
+                if(id < variantClusteringPositionPairAlleles.size()) {
+                    const uint8_t allele = variantClusteringPositionPairAlleles[id];
+                    if(allele < 5) {
+                        readsByAllele[allele].insert(ridVal);
+                    }
+                }
+            }
+            
+            // Check if this cluster has at least 2 alleles with coverage >= 4
+            uint64_t eligibleAlleles = 0;
+            for(uint8_t a = 0; a < 5; a++) {
+                if(readsByAllele[a].size() >= 4) {
+                    eligibleAlleles++;
+                }
+            }
+            
+            if(eligibleAlleles < 2) {
+                continue;  // Skip clusters that don't meet the criteria
+            }
+            
+            cout << "\nCluster " << clusterIdx << " (rep=" << rep << "):" << endl;
+            cout << "  Total position pairs: " << members.size() << endl;
+            cout << "  Total unique reads: " << allReads.size() << endl;
+            cout << "  Reads per allele:";
+            for(uint8_t a = 0; a < 5; a++) {
+                if(readsByAllele[a].size() > 0) {
+                    const char alleleChar = Base::fromInteger(a).character();
+                    cout << " " << alleleChar << "=" << readsByAllele[a].size();
+                }
+            }
+            cout << endl;
+            
+            // Print all position pairs in this cluster
+            cout << "  Position pairs:" << endl;
+            const size_t maxPairsToShow = std::min(size_t(20), members.size());
+            for(size_t i = 0; i < maxPairsToShow; i++) {
+                const uint64_t id = members[i];
+                const auto& posPair = variantClusteringPositionPairs[id];
+                const uint8_t allele = (id < variantClusteringPositionPairAlleles.size()) 
+                                        ? variantClusteringPositionPairAlleles[id] : 4;
+                const char alleleChar = (allele == 0) ? 'A' : (allele == 1) ? 'C' : 
+                                        (allele == 2) ? 'G' : (allele == 3) ? 'T' : '?';
+                
+                cout << "    [" << i << "] ReadId=" << posPair.first.getReadId()
+                    << " Strand=" << posPair.first.getStrand()
+                    << " Pos=" << posPair.second
+                    << " Allele=" << alleleChar << endl;
+            }
+            if(members.size() > maxPairsToShow) {
+                cout << "    ... (" << (members.size() - maxPairsToShow) << " more pairs)" << endl;
+            }
         }
-        if(members.size() > maxPairsToShow) {
-            cout << "    ... (" << (members.size() - maxPairsToShow) << " more pairs)" << endl;
+        
+        if(clustersWithDebugRead == 0) {
+            cout << "No clusters found containing read 0-0" << endl;
+        } else {
+            cout << "\nTotal clusters containing read 0-0: " << clustersWithDebugRead << endl;
         }
+        cout << "=== END DEBUG ===" << endl << endl;
     }
-    
-    if(clustersWithDebugRead == 0) {
-        cout << "No clusters found containing read 0-0" << endl;
-    } else {
-        cout << "\nTotal clusters containing read 0-0: " << clustersWithDebugRead << endl;
-    }
-    cout << "=== END DEBUG ===" << endl << endl;
-
 
 
     
@@ -997,7 +997,7 @@ void Assembler::performGlobalVariantClustering(
     cout << std::left << std::setw(40) << "Prerequisites check" << std::right << std::setw(12) << tCheck << std::setw(12) << (100.0 * tCheck / tTotal) << endl;
     cout << std::left << std::setw(40) << "Access position pairs" << std::right << std::setw(12) << tAccess << std::setw(12) << (100.0 * tAccess / tTotal) << endl;
     cout << std::left << std::setw(40) << "Occurrence filter" << std::right << std::setw(12) << tOccurrence << std::setw(12) << (100.0 * tOccurrence / tTotal) << endl;
-    // cout << std::left << std::setw(40) << "Well-separated filter" << std::right << std::setw(12) << tSeparation << std::setw(12) << (100.0 * tSeparation / tTotal) << endl;
+    cout << std::left << std::setw(40) << "Well-separated filter" << std::right << std::setw(12) << tSeparation << std::setw(12) << (100.0 * tSeparation / tTotal) << endl;
     cout << std::left << std::setw(40) << "Initialize disjoint sets" << std::right << std::setw(12) << tDisjointSetInit << std::setw(12) << (100.0 * tDisjointSetInit / tTotal) << endl;
     cout << std::left << std::setw(40) << "Phase 2: Link pairs" << std::right << std::setw(12) << tPass2 << std::setw(12) << (100.0 * tPass2 / tTotal) << endl;
     cout << std::left << std::setw(40) << "Identify clusters" << std::right << std::setw(12) << tIdentifyClusters << std::setw(12) << (100.0 * tIdentifyClusters / tTotal) << endl;
