@@ -722,6 +722,15 @@ void shasta::main::assemble(
         computeProjectedAlignmentMetrics,
         threadCount);
 
+    
+    if (assemblerOptions.readGraphOptions.creationMethod == 5) {
+        assembler.performGlobalVariantClustering(
+            assemblerOptions.markerGraphOptions.minCoverage,
+            assemblerOptions.markerGraphOptions.maxCoverage,
+            threadCount);
+    }
+
+
     // Marker KmerIds are freed here.
     // For align method 6 this is done earlier.
     if(assemblerOptions.alignOptions.alignMethod != 6) {

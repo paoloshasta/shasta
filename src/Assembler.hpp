@@ -20,6 +20,7 @@
 #include "ReadGraph.hpp"
 #include "ReadId.hpp"
 #include "shastaTypes.hpp"
+#include "MarkerKmers.hpp"
 
 // Standard library.
 #include "memory.hpp"
@@ -1083,6 +1084,25 @@ public:
     void storeVariantClusteringPositionPairs(
         size_t threadCount,
         ComputeAlignmentsData& data);
+
+    void performGlobalVariantClustering(
+        uint64_t minCoverage,
+        uint64_t maxCoverage,
+        size_t threadCount = 0);
+
+    // Compact context for a position pair: prev/next marker infos
+    struct VariantPositionContext {
+        MarkerKmers::MarkerInfo prevMarkerInfo;
+        MarkerKmers::MarkerInfo nextMarkerInfo;
+    };
+
+    MemoryMapped::Vector<__uint128_t> variantClusteringDisjointSetTable;
+    MemoryMapped::Vector<uint8_t> variantClusteringPositionPairAlleles;
+    MemoryMapped::Vector<VariantPositionContext> variantClusteringPositionPairContexts;
+    std::shared_ptr<DisjointSets> variantClusteringDisjointSets;
+    std::vector<uint64_t> variantClusteringClusterRepresentatives;
+
+    void linkVariantClustersThreadFunction(uint64_t threadId);  // Phase 2: Link pairs with disjoint sets
 
 
 
