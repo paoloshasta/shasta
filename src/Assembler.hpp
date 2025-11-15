@@ -67,6 +67,13 @@ namespace shasta {
     class ReferenceOverlapMap;
     class ProjectedAlignment;
 
+    // Compact context for a position pair: prev/next marker infos
+    class VariantPositionContext {
+    public:
+        MarkerKmers::MarkerInfo prevMarkerInfo;
+        MarkerKmers::MarkerInfo nextMarkerInfo;
+    };
+
     namespace mode0 {
         class AssemblyGraph;
     }
@@ -207,15 +214,6 @@ public:
         return peakMemoryUsage > 0 ? to_string(peakMemoryUsage) : "Not determined.";
     }
 };
-
-
-namespace shasta {
-    // Compact context for a position pair: prev/next marker infos
-    struct VariantPositionContext {
-        MarkerKmers::MarkerInfo prevMarkerInfo;
-        MarkerKmers::MarkerInfo nextMarkerInfo;
-    };
-}
 
 class shasta::Assembler :
     public MultithreadedObject<Assembler>,

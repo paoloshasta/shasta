@@ -30,7 +30,7 @@ namespace shasta {
     class MarkerGraph;
     class MarkerInterval;
     class Reads;
-    struct VariantPositionContext;
+    class VariantPositionContext;
 
     // The main input to mode 3 assembly is a set of anchors.
     // Each anchor consists of a span of AnchorMarkerInterval, with the following requirements:
