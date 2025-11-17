@@ -534,7 +534,7 @@ void Assembler::performGlobalVariantClustering(
     //     Filter out clusters of nearby SNPs (well-separated filter)
     //     Sequencing error and artifacts often appear as clusters of nearby SNPs.
     //     To avoid clusters of errors, the informative SNPs need to be well-separated.
-    //     Only SNPs at least 16bp apart are considered.
+    //     Only SNPs at least 32bp apart are considered.
     //     Since variantClusteringFilteredPositionPairs is already sorted by (OrientedReadId, position),
     //     positions from the same read are grouped together - we can do a single pass!
     
@@ -544,7 +544,7 @@ void Assembler::performGlobalVariantClustering(
     const uint64_t filteredCountBeforeSeparation = variantClusteringFilteredPositionPairs.size();
 
     // --- Filter out clusters of nearby SNPs (well-separated filter) ---
-    const uint64_t minSeparation = 16;
+    const uint64_t minSeparation = 32;
 
     MemoryMapped::Vector<pair<OrientedReadId, uint32_t>> wellSeparatedPositionPairs;
     wellSeparatedPositionPairs.createNew(
