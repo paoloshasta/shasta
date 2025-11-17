@@ -987,6 +987,10 @@ private:
         // Variant clustering position pairs collected by each thread
         // Each pair is (OrientedReadId, position)
         vector< shared_ptr< MemoryMapped::Vector< pair<OrientedReadId, uint32_t> > > > threadVariantClusteringPositionPairs;
+        
+        // Timing accumulators for variant clustering (per thread, in seconds)
+        vector<double> threadProjectedAlignmentTime;  // Time spent in ProjectedAlignment construction
+        vector<double> threadCollectionTime;          // Time spent in collectVariantClusteringPositionPairs
     };
     ComputeAlignmentsData computeAlignmentsData;
 
@@ -1096,6 +1100,12 @@ public:
     MemoryMapped::Vector<VariantPositionContext> variantClusteringPositionPairContexts;
     std::shared_ptr<DisjointSets> variantClusteringDisjointSets;
     std::vector<uint64_t> variantClusteringClusterRepresentatives;
+    std::vector<uint64_t> variantClusteringLinkCounts;  // Per-thread counters: [thread*4+0]=forward links, [thread*4+1]=RC links, [thread*4+2]=mismatches found, [thread*4+3]=mismatches skipped
+    
+    // Timing for variant clustering phases (wall-clock time in seconds)
+    double variantClusteringProjectedAlignmentTime = 0.0;
+    double variantClusteringCollectionTime = 0.0;
+    double variantClusteringStorageTime = 0.0;
 
     void linkVariantClustersThreadFunction(uint64_t threadId);  // Phase 2: Link pairs with disjoint sets
 

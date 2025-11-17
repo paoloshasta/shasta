@@ -274,6 +274,8 @@ void Assembler::computeAlignments(
 
     if (assemblerInfo->readGraphCreationMethod == 5) {
         data.threadVariantClusteringPositionPairs.resize(threadCount);
+        data.threadProjectedAlignmentTime.resize(threadCount, 0.0);
+        data.threadCollectionTime.resize(threadCount, 0.0);
     }
     
     performanceLog << timestamp << "Alignment computation begins." << endl;
@@ -315,6 +317,28 @@ void Assembler::computeAlignments(
 
 
     if (assemblerInfo->readGraphCreationMethod == 5) {
+        // Aggregate timing statistics from all threads
+        double totalProjectedAlignmentTime = 0.0;
+        double totalCollectionTime = 0.0;
+        for (size_t i = 0; i < threadCount; i++) {
+            totalProjectedAlignmentTime += data.threadProjectedAlignmentTime[i];
+            totalCollectionTime += data.threadCollectionTime[i];
+        }
+        
+        // Estimate wall-clock time by dividing summed thread time by thread count
+        const double estimatedProjectedWallTime = totalProjectedAlignmentTime / threadCount;
+        const double estimatedCollectionWallTime = totalCollectionTime / threadCount;
+        
+        // Store these times for the variant clustering summary
+        variantClusteringProjectedAlignmentTime = estimatedProjectedWallTime;
+        variantClusteringCollectionTime = estimatedCollectionWallTime;
+        
+        cout << "\nVariant clustering collection timing (estimated wall-clock):" << endl;
+        cout << "  Projected alignment: ~" << estimatedProjectedWallTime << " s" << endl;
+        cout << "  Position pair collection: ~" << estimatedCollectionWallTime << " s" << endl;
+        performanceLog << timestamp << "Projected alignment (estimated wall-clock): " << estimatedProjectedWallTime << " s" << endl;
+        performanceLog << timestamp << "Collection (estimated wall-clock): " << estimatedCollectionWallTime << " s" << endl;
+        
         // Store position pairs collected by each thread
         performanceLog << timestamp << "Storing position pairs for variant clustering." << endl;
         cout << timestamp << "Storing position pairs for variant clustering." << endl;
@@ -575,15 +599,19 @@ void Assembler::computeAlignmentsThreadFunction(size_t threadId)
 
             // Compute projected alignment metrics, if requested.
             if(computeProjectedAlignmentMetrics) {
+                const auto tProjStart = steady_clock::now();
                 const ProjectedAlignment projectedAlignment(
                     *this,
                     orientedReadIds,
                     alignment,
                     ProjectedAlignment::Method::QuickRaw);
+                const auto tProjEnd = steady_clock::now();
+                
                 alignmentInfo.errorRate = float(projectedAlignment.errorRate());
                 alignmentInfo.mismatchCount = uint32_t(projectedAlignment.mismatchCount);
 
                 if (assemblerInfo->readGraphCreationMethod == 5) {
+                    data.threadProjectedAlignmentTime[threadId] += seconds(tProjEnd - tProjStart);
 
                     // Skip alignments with error rate greater than 0.07.
                     if (alignmentInfo.errorRate > 0.07) {
@@ -592,11 +620,14 @@ void Assembler::computeAlignmentsThreadFunction(size_t threadId)
 
                     // Collect position pairs for variant clustering
                     // Only collect those with SNP differences (No indels)
+                    const auto tCollectStart = steady_clock::now();
                     collectVariantClusteringPositionPairs(
                         projectedAlignment,
                         orientedReadIds,
                         *data.threadVariantClusteringPositionPairs[threadId]
                     );
+                    const auto tCollectEnd = steady_clock::now();
+                    data.threadCollectionTime[threadId] += seconds(tCollectEnd - tCollectStart);
                 }
 
                 

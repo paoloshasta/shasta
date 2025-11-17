@@ -115,6 +115,8 @@ void Assembler::storeVariantClusteringPositionPairs(
     size_t threadCount,
     ComputeAlignmentsData& data)
 {
+    const auto tStoreStart = steady_clock::now();
+    
     // Store position pairs collected for variant clustering
     performanceLog << timestamp << "Storing position pairs for variant clustering." << endl;
     
@@ -147,8 +149,15 @@ void Assembler::storeVariantClusteringPositionPairs(
         }
     }
     variantClusteringPositionPairs.unreserve();
-    performanceLog << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering." << endl;
-    cout << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering." << endl;
+    
+    const auto tStoreEnd = steady_clock::now();
+    const double tStore = seconds(tStoreEnd - tStoreStart);
+    
+    // Store the time for the variant clustering summary
+    variantClusteringStorageTime = tStore;
+    
+    performanceLog << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries for variant clustering in " << tStore << " s." << endl;
+    cout << timestamp << "Stored " << variantClusteringPositionPairs.size() << " position pair entries in " << tStore << " s." << endl;
 }
 
 
@@ -169,6 +178,12 @@ void Assembler::linkVariantClustersThreadFunction(uint64_t threadId)
     const auto& alignmentDataRef = alignmentData;
     const auto& markersRef = markers;
     const auto& compressedAlignmentsRef = compressedAlignments;
+    
+    // Thread-local counters
+    uint64_t& forwardLinks = variantClusteringLinkCounts[threadId * 4 + 0];
+    uint64_t& rcLinks = variantClusteringLinkCounts[threadId * 4 + 1];
+    uint64_t& mismatchesFound = variantClusteringLinkCounts[threadId * 4 + 2];
+    uint64_t& mismatchesSkipped = variantClusteringLinkCounts[threadId * 4 + 3];
         
     // Get batches of alignment IDs to process
     uint64_t alignmentIdBegin, alignmentIdEnd;
@@ -222,6 +237,8 @@ void Assembler::linkVariantClustersThreadFunction(uint64_t threadId)
 
                         if (base0 != base1) {
                             // Mismatch found!
+                            mismatchesFound++;
+                            
                             uint64_t positionInRead0 = segment.positionsA[0] + position0;
                             uint64_t positionInRead1 = segment.positionsA[1] + position1;
 
@@ -236,7 +253,35 @@ void Assembler::linkVariantClustersThreadFunction(uint64_t threadId)
                             // Track if forward pairs were found
                             bool found0 = (it0 != pairsEnd && *it0 == pair0);
                             bool found1 = (it1 != pairsEnd && *it1 == pair1);
-                            
+
+                            // Create reverse complement position pairs
+                            OrientedReadId currentOrientedReadId0Rc(currentOrientedReadId0.getReadId(), 1 - currentOrientedReadId0.getStrand());
+                            OrientedReadId currentOrientedReadId1Rc(currentOrientedReadId1.getReadId(), 1 - currentOrientedReadId1.getStrand());
+                            const uint64_t readLength0 = getReads().getReadRawSequenceLength(currentOrientedReadId0.getReadId());
+                            const uint64_t readLength1 = getReads().getReadRawSequenceLength(currentOrientedReadId1.getReadId());
+                            pair<OrientedReadId, uint32_t> pair0Rc(currentOrientedReadId0Rc, uint32_t(readLength0 - 1 - positionInRead0));
+                            pair<OrientedReadId, uint32_t> pair1Rc(currentOrientedReadId1Rc, uint32_t(readLength1 - 1 - positionInRead1));
+
+                            // Binary search to find IDs in sorted vector (O(log n) lookup)
+                            auto it0Rc = std::lower_bound(variantClusteringPositionPairs.begin(), variantClusteringPositionPairs.end(), pair0Rc);
+                            auto it1Rc = std::lower_bound(variantClusteringPositionPairs.begin(), variantClusteringPositionPairs.end(), pair1Rc);
+
+                            // Track if reverse complement pairs were found
+                            bool found0Rc = (it0Rc != pairsEnd && *it0Rc == pair0Rc);
+                            bool found1Rc = (it1Rc != pairsEnd && *it1Rc == pair1Rc);
+
+                            // Those are some very questionable mismatches caused by small alignment errors (mostly 1-3 position coordinates).
+                            // After filtering of the original position pairs, each position pair should have a reverse complement pair, by design.
+                            // If only found0 and found1 are true, and found0Rc and found1Rc are false, then 
+                            // it means that those positions were filtered out in the well-separated filter.
+                            // The well-separated filter works only on the strand-0 pairs and those which pass the filter are
+                            // used to synthesize the corresponding strand-1 pair. Thus, those synthetized pairs may not corrspond
+                            // to the position pairs found in the alignment we process (due to small alignment errors).
+                            if (!(found0 and found1 and found0Rc and found1Rc)) {
+                                mismatchesSkipped++;
+                                continue;
+                            }
+
                             // Verify we found exact matches and link them
                             if (found0 && found1) {
                                 uint64_t id0 = it0 - pairsBegin;
@@ -246,6 +291,7 @@ void Assembler::linkVariantClustersThreadFunction(uint64_t threadId)
                                 
                                 // Link these two position pairs in the disjoint sets
                                 disjointSets.unite(id0, id1);
+                                forwardLinks++;
                                 
                                 // Store allele information
                                 variantClusteringPositionPairAlleles[id0] = base0.value;
@@ -261,25 +307,6 @@ void Assembler::linkVariantClustersThreadFunction(uint64_t threadId)
                                 markerInfoContext1.nextMarkerInfo = MarkerKmers::MarkerInfo(currentOrientedReadId1, segment.ordinalsB[1]);
                             }
                             
-                            
-                            // Create reverse complement position pairs
-                            OrientedReadId currentOrientedReadId0Rc(currentOrientedReadId0.getReadId(), 1 - currentOrientedReadId0.getStrand());
-                            OrientedReadId currentOrientedReadId1Rc(currentOrientedReadId1.getReadId(), 1 - currentOrientedReadId1.getStrand());
-                            const uint64_t readLength0 = getReads().getReadRawSequenceLength(currentOrientedReadId0.getReadId());
-                            const uint64_t readLength1 = getReads().getReadRawSequenceLength(currentOrientedReadId1.getReadId());
-                            pair<OrientedReadId, uint32_t> pair0Rc(currentOrientedReadId0Rc, uint32_t(readLength0 - 1 - positionInRead0));
-                            pair<OrientedReadId, uint32_t> pair1Rc(currentOrientedReadId1Rc, uint32_t(readLength1 - 1 - positionInRead1));
-
-                            // Binary search to find IDs in sorted vector (O(log n) lookup)
-                            auto it0Rc = std::lower_bound(variantClusteringPositionPairs.begin(), variantClusteringPositionPairs.end(), pair0Rc);
-                            auto it1Rc = std::lower_bound(variantClusteringPositionPairs.begin(), variantClusteringPositionPairs.end(), pair1Rc);
-
-
-                            // Track if reverse complement pairs were found
-                            bool found0Rc = (it0Rc != pairsEnd && *it0Rc == pair0Rc);
-                            bool found1Rc = (it1Rc != pairsEnd && *it1Rc == pair1Rc);
-                            
-
                             // Verify we found exact matches and link them
                             if (found0Rc && found1Rc) {
                                 uint64_t id0Rc = it0Rc - pairsBegin;
@@ -289,6 +316,7 @@ void Assembler::linkVariantClustersThreadFunction(uint64_t threadId)
 
                                 // Link these two position pairs in the disjoint sets
                                 disjointSets.unite(id0Rc, id1Rc);
+                                rcLinks++;
 
                                 // Find the base these position pairs represent in the reverse strand reads
                                 Base base0Rc = getReads().getOrientedReadBase(currentOrientedReadId0Rc, readLength0 - 1 - positionInRead0);
@@ -339,9 +367,6 @@ void Assembler::performGlobalVariantClustering(
     uint64_t maxCoverage,
     size_t threadCount)
 {
-    
-    const auto tTotalStart = steady_clock::now();
-    
     performanceLog << timestamp << "Starting Global Variant Clustering" << endl;
     cout << timestamp << "Starting Global Variant Clustering" << endl;
     
@@ -359,9 +384,11 @@ void Assembler::performGlobalVariantClustering(
     const double tCheck = seconds(tCheckEnd - tCheckStart);
     
     // Access position pairs that were collected during alignment computation
+    // Note: Finding and storage of position pairs happened during computeAlignments (timed separately)
     const auto tAccessStart = steady_clock::now();
     performanceLog << timestamp << "Accessing position pairs from alignment computation" << endl;
-    cout << "Accessing position pairs collected during alignment computation..." << endl;
+    cout << "\nAccessing position pairs collected during alignment computation..." << endl;
+    cout << "(Collection and storage timing reported during alignment computation phase)" << endl;
     
     // The position pairs were already collected in variantClusteringPositionPairs during computeAlignments
     // We need to access them (they're already stored)
@@ -383,7 +410,6 @@ void Assembler::performGlobalVariantClustering(
     //     Sort, count occurrences, and filter position pairs
     //     This creates our "perfect hash" where the index is the OrientedReadId
 
-    const auto tDeduplicateStart = steady_clock::now();
     performanceLog << timestamp << "Sorting, counting, and filtering position pairs" << endl;
     cout << "Sorting and counting position pair occurrences..." << endl;
     const auto tOccurrenceStart = steady_clock::now();
@@ -421,6 +447,19 @@ void Assembler::performGlobalVariantClustering(
         }
     }
 
+    // Replace the memory-mapped vector with filtered results
+    variantClusteringPositionPairs.clear();
+    variantClusteringPositionPairs.reserve(variantClusteringFilteredPositionPairs.size());
+    for (const auto& pair : variantClusteringFilteredPositionPairs) {
+        variantClusteringPositionPairs.push_back(pair);
+    }
+    variantClusteringPositionPairs.unreserve();
+
+    // Sort using std::sort (works because MemoryMapped::Vector::begin/end return T*)
+    std::sort(variantClusteringFilteredPositionPairs.begin(), variantClusteringFilteredPositionPairs.end());
+
+    const auto tOccurrenceEnd = steady_clock::now();
+    const double tOccurrence = seconds(tOccurrenceEnd - tOccurrenceStart);
 
     // Sanity check: ensure each filtered pair still has its reverse-complement view
     {
@@ -473,9 +512,6 @@ void Assembler::performGlobalVariantClustering(
         cout << "Number of pairs in 1st strand: " << count1 << endl;
     }
 
-    const auto tOccurrenceEnd = steady_clock::now();
-    const double tOccurrence = seconds(tOccurrenceEnd - tOccurrenceStart);
-
     cout << "After filtering (min occurrences=" << minOccurrences << "): " 
          << variantClusteringFilteredPositionPairs.size() << " position pairs (from " << totalOccurrences << " total occurrences)" << endl;
     cout << "  Filtered out " << totalOccurrences - variantClusteringFilteredPositionPairs.size() << " position pairs with < " << minOccurrences << " occurrences" << endl;
@@ -485,16 +521,7 @@ void Assembler::performGlobalVariantClustering(
     // --- END OF: MINIMUM OCCURRENCES FILTER
     // 
 
-    // Replace the memory-mapped vector with filtered results
-    variantClusteringPositionPairs.clear();
-    variantClusteringPositionPairs.reserve(variantClusteringFilteredPositionPairs.size());
-    for (const auto& pair : variantClusteringFilteredPositionPairs) {
-        variantClusteringPositionPairs.push_back(pair);
-    }
-    variantClusteringPositionPairs.unreserve();
-
-    // Sort using std::sort (works because MemoryMapped::Vector::begin/end return T*)
-    std::sort(variantClusteringFilteredPositionPairs.begin(), variantClusteringFilteredPositionPairs.end());
+    
 
 
 
@@ -584,6 +611,14 @@ void Assembler::performGlobalVariantClustering(
     std::cout << "  Filtered out " << wellSeparatedFilteredOut
                 << " position pairs within " << minSeparation
                 << "bp of adjacent positions" << std::endl;
+                
+    // Replace the memory-mapped vector with filtered results
+    variantClusteringPositionPairs.clear();
+    variantClusteringPositionPairs.reserve(wellSeparatedPositionPairs.size());
+    for (const auto& pair : wellSeparatedPositionPairs) {
+        variantClusteringPositionPairs.push_back(pair);
+    }
+    variantClusteringPositionPairs.unreserve();
 
     const auto tSeparationEnd = steady_clock::now();
     const double tSeparation = seconds(tSeparationEnd - tSeparationStart);
@@ -655,22 +690,13 @@ void Assembler::performGlobalVariantClustering(
         // }
     }
 
-
-    const auto tDeduplicateEnd = steady_clock::now();
-    const double tDeduplicate = seconds(tDeduplicateEnd - tDeduplicateStart);
     cout << "  Occurrence filter time: " << tOccurrence << " s" << endl;
     cout << "  Well-separated filter time: " << tSeparation << " s" << endl;
     performanceLog << timestamp << "Occurrence filter time " << tOccurrence << " s" << endl;
     performanceLog << timestamp << "Well-separated filter time " << tSeparation << " s" << endl;
 
 
-    // Replace the memory-mapped vector with filtered results
-    variantClusteringPositionPairs.clear();
-    variantClusteringPositionPairs.reserve(wellSeparatedPositionPairs.size());
-    for (const auto& pair : wellSeparatedPositionPairs) {
-        variantClusteringPositionPairs.push_back(pair);
-    }
-    variantClusteringPositionPairs.unreserve();
+    
 
     
     // XXX
@@ -735,6 +761,13 @@ void Assembler::performGlobalVariantClustering(
     performanceLog << timestamp << "Phase 2: Linking position pairs with disjoint sets" << endl;
     cout << "\nPhase 2: Linking position pairs with disjoint sets..." << endl;
     
+    // Initialize per-thread counters for tracking links
+    // Each thread gets 4 counters: forward links, RC links, mismatches found, mismatches skipped
+    variantClusteringLinkCounts.resize(threadCount * 4);
+    for (size_t i = 0; i < threadCount * 4; i++) {
+        variantClusteringLinkCounts[i] = 0;
+    }
+    
     // Pick the batch size for load balancing alignments
     const uint64_t requestedBatchSize = 1;  // Process alignments in batches
     setupLoadBalancing(alignmentData.size(), requestedBatchSize);
@@ -742,7 +775,31 @@ void Assembler::performGlobalVariantClustering(
 
     const auto tPass2End = steady_clock::now();
     const double tPass2 = seconds(tPass2End - tPass2Start);
-    cout << "Phase 2 complete" << endl;
+    
+    // Aggregate link counts from all threads
+    uint64_t totalForwardLinks = 0;
+    uint64_t totalRcLinks = 0;
+    uint64_t totalMismatchesFound = 0;
+    uint64_t totalMismatchesSkipped = 0;
+    for (size_t i = 0; i < threadCount; i++) {
+        totalForwardLinks += variantClusteringLinkCounts[i * 4 + 0];
+        totalRcLinks += variantClusteringLinkCounts[i * 4 + 1];
+        totalMismatchesFound += variantClusteringLinkCounts[i * 4 + 2];
+        totalMismatchesSkipped += variantClusteringLinkCounts[i * 4 + 3];
+    }
+    
+    cout << "Phase 2 complete (wall-clock time: " << tPass2 << " s)" << endl;
+    cout << "  Mismatches found: " << totalMismatchesFound << endl;
+    cout << "  Mismatches skipped (incomplete RC pairs): " << totalMismatchesSkipped << endl;
+    cout << "  Forward strand links (unite() calls): " << totalForwardLinks << endl;
+    cout << "  RC strand links (unite() calls): " << totalRcLinks << endl;
+    cout << "  Total links: " << (totalForwardLinks + totalRcLinks) << endl;
+    
+    performanceLog << timestamp << "Phase 2 statistics: " 
+                  << totalMismatchesFound << " mismatches found, "
+                  << totalMismatchesSkipped << " skipped, "
+                  << totalForwardLinks << " forward links, "
+                  << totalRcLinks << " RC links" << endl;
     
 
 
@@ -762,7 +819,8 @@ void Assembler::performGlobalVariantClustering(
 
         uint64_t inconsistencies = 0;
         uint64_t checkedPairs = 0;
-        const uint64_t sampleSize = std::min(variantClusteringPositionPairs.size(), uint64_t(10000));
+        // const uint64_t sampleSize = std::min(variantClusteringPositionPairs.size(), uint64_t(10000));
+        const uint64_t sampleSize = variantClusteringPositionPairs.size();
 
         // Sample check: verify that if (readId, 0, pos) is linked with others,
         // then (readId, 1, readLength-1-pos) is linked with corresponding RC pairs
@@ -843,6 +901,73 @@ void Assembler::performGlobalVariantClustering(
                     << inconsistencies << " inconsistencies" << endl;
     }
     
+    // Verify reverse complement pair EXISTENCE (not just linkage)
+    {
+        const auto tVerifyExistenceStart = steady_clock::now();
+        performanceLog << timestamp << "Verifying reverse complement pair existence" << endl;
+        cout << "\nVerifying reverse complement pair existence..." << endl;
+        
+        // Check if every forward pair has a corresponding RC pair
+        uint64_t missingRcPairs = 0;
+        uint64_t strand0Count = 0;
+        uint64_t strand1Count = 0;
+        
+        // Build a set of all pairs for fast lookup
+        std::set<pair<OrientedReadId, uint32_t>> pairSet;
+        for (const auto& p : variantClusteringPositionPairs) {
+            pairSet.insert(p);
+            if (p.first.getStrand() == 0) {
+                strand0Count++;
+            } else {
+                strand1Count++;
+            }
+        }
+        
+        // Check each pair to see if its RC counterpart exists
+        for (const auto& pair : variantClusteringPositionPairs) {
+            const ReadId readId = pair.first.getReadId();
+            const Strand strand = pair.first.getStrand();
+            const uint32_t position = pair.second;
+            
+            // Calculate RC pair
+            const uint64_t readLength = getReads().getReadRawSequenceLength(readId);
+            const uint32_t positionRc = readLength - 1 - position;
+            const Strand strandRc = 1 - strand;
+            OrientedReadId orientedReadIdRc(readId, strandRc);
+            const auto rcPair = make_pair(orientedReadIdRc, positionRc);
+            
+            // Check if RC pair exists
+            if (pairSet.find(rcPair) == pairSet.end()) {
+                missingRcPairs++;
+                if (missingRcPairs <= 5) {
+                    cout << "MISSING RC PAIR: " << pair.first << ":" << position 
+                         << " exists, but RC pair " << orientedReadIdRc << ":" << positionRc
+                         << " does NOT exist" << endl;
+                }
+            }
+        }
+        
+        const auto tVerifyExistenceEnd = steady_clock::now();
+        const double tVerifyExistence = seconds(tVerifyExistenceEnd - tVerifyExistenceStart);
+        
+        cout << "Pair existence check:" << endl;
+        cout << "  Total pairs: " << variantClusteringPositionPairs.size() << endl;
+        cout << "  Strand 0 pairs: " << strand0Count << endl;
+        cout << "  Strand 1 pairs: " << strand1Count << endl;
+        cout << "  Missing RC pairs: " << missingRcPairs << endl;
+        
+        if (missingRcPairs == 0) {
+            cout << "✓ All pairs have their reverse complement counterparts!" << endl;
+        } else {
+            cout << "✗ WARNING: " << missingRcPairs << " pairs are missing their RC counterparts!" << endl;
+            cout << "  This explains why SHASTA_ASSERT(found0 && found1 && found0Rc && found1Rc) fails." << endl;
+            cout << "  Phase 1 filtering created an asymmetry between forward and RC strands." << endl;
+        }
+        
+        performanceLog << timestamp << "RC existence verification: " 
+                      << missingRcPairs << " missing RC pairs out of " 
+                      << variantClusteringPositionPairs.size() << " total pairs" << endl;
+    }
 
 
 
@@ -985,9 +1110,8 @@ void Assembler::performGlobalVariantClustering(
 
 
     
-    // Print timing summary
-    const auto tTotalEnd = steady_clock::now();
-    const double tTotal = seconds(tTotalEnd - tTotalStart);
+    // Print timing summary (excluding debug/verification code)
+    const double tTotal = tCheck + tAccess + variantClusteringProjectedAlignmentTime + variantClusteringCollectionTime + variantClusteringStorageTime + tOccurrence + tSeparation + tDisjointSetInit + tPass2 + tIdentifyClusters;
     
     cout << "\n============================================" << endl;
     cout << "VARIANT CLUSTERING TIMING SUMMARY" << endl;
@@ -996,6 +1120,9 @@ void Assembler::performGlobalVariantClustering(
     cout << std::string(64, '-') << endl;
     cout << std::left << std::setw(40) << "Prerequisites check" << std::right << std::setw(12) << tCheck << std::setw(12) << (100.0 * tCheck / tTotal) << endl;
     cout << std::left << std::setw(40) << "Access position pairs" << std::right << std::setw(12) << tAccess << std::setw(12) << (100.0 * tAccess / tTotal) << endl;
+    cout << std::left << std::setw(40) << "  Projected alignment" << std::right << std::setw(12) << variantClusteringProjectedAlignmentTime << std::setw(12) << (100.0 * variantClusteringProjectedAlignmentTime / tTotal) << endl;
+    cout << std::left << std::setw(40) << "  Collection" << std::right << std::setw(12) << variantClusteringCollectionTime << std::setw(12) << (100.0 * variantClusteringCollectionTime / tTotal) << endl;
+    cout << std::left << std::setw(40) << "  Storage" << std::right << std::setw(12) << variantClusteringStorageTime << std::setw(12) << (100.0 * variantClusteringStorageTime / tTotal) << endl;
     cout << std::left << std::setw(40) << "Occurrence filter" << std::right << std::setw(12) << tOccurrence << std::setw(12) << (100.0 * tOccurrence / tTotal) << endl;
     cout << std::left << std::setw(40) << "Well-separated filter" << std::right << std::setw(12) << tSeparation << std::setw(12) << (100.0 * tSeparation / tTotal) << endl;
     cout << std::left << std::setw(40) << "Initialize disjoint sets" << std::right << std::setw(12) << tDisjointSetInit << std::setw(12) << (100.0 * tDisjointSetInit / tTotal) << endl;
