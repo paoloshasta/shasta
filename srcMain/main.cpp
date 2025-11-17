@@ -1239,7 +1239,8 @@ void shasta::main::mode3Assembly(
             assembler.variantClusteringPositionPairAlleles,
             assembler.variantClusteringPositionPairContexts,
             /*minClusterCoverage*/ 6,
-            /*minAlleleCoverage*/ 3,
+            /*minAlleleCoverage*/ 5,
+            /*minCommonKmerFraction*/ 0.8,
             threadCount);
     
     }

@@ -14,6 +14,7 @@
 #include <boost/property_tree/ptree_fwd.hpp>
 
 // Standard library.
+#include <atomic>
 #include "cstdint.hpp"
 #include "memory.hpp"
 #include "span.hpp"
@@ -30,7 +31,13 @@ namespace shasta {
     class MarkerGraph;
     class MarkerInterval;
     class Reads;
-    class VariantPositionContext;
+    
+    // Context information for a variant position, storing markers before and after the variant.
+    class VariantPositionContext {
+    public:
+        MarkerKmers::MarkerInfo prevMarkerInfo;
+        MarkerKmers::MarkerInfo nextMarkerInfo;
+    };
 
     // The main input to mode 3 assembly is a set of anchors.
     // Each anchor consists of a span of AnchorMarkerInterval, with the following requirements:
@@ -161,6 +168,7 @@ public:
         const MemoryMapped::Vector<VariantPositionContext>& positionPairContexts,
         uint64_t minClusterCoverage,
         uint64_t minAlleleCoverage,
+        double minCommonKmerFraction,  // Minimum fraction of reads sharing a kmer (e.g., 0.8 = 80%)
         uint64_t threadCount);
 
     // This constructor access existing Anchors.
@@ -351,6 +359,7 @@ private:
     public:
         uint64_t minClusterCoverage;
         uint64_t minAlleleCoverage;
+        double minCommonKmerFraction;  // Minimum fraction of reads that must share a kmer (e.g., 0.8 = 80%)
         
 
         const std::vector<uint64_t>* clusterRepresentatives;
@@ -366,6 +375,15 @@ private:
 
         // The anchors found by each thread.
         vector< shared_ptr<MemoryMapped::VectorOfVectors<MarkerInfo, uint64_t> > > threadAnchors;
+        
+        // Global counter for anchors that couldn't be generated (no common kmer found)
+        std::atomic<uint64_t> anchorsSkippedNoCommonKmer;
+        
+        // Lock-free tracking of used markers using atomic bool array
+        // Each index corresponds to a global MarkerId
+        std::unique_ptr<std::atomic<bool>[]> markerUsed;
+        uint64_t markerCount;  // Total number of markers
+        std::atomic<uint64_t> anchorsSkippedDuplicateMarkers;
     };
     ConstructFromHetSitesData constructFromHetSitesData;
     void constructFromHetSitesThreadFunction(uint64_t threadId);

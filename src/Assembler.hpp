@@ -21,6 +21,7 @@
 #include "ReadId.hpp"
 #include "shastaTypes.hpp"
 #include "MarkerKmers.hpp"
+#include "mode3-Anchor.hpp"
 
 // Standard library.
 #include "memory.hpp"
@@ -67,12 +68,7 @@ namespace shasta {
     class ReferenceOverlapMap;
     class ProjectedAlignment;
 
-    // Compact context for a position pair: prev/next marker infos
-    class VariantPositionContext {
-    public:
-        MarkerKmers::MarkerInfo prevMarkerInfo;
-        MarkerKmers::MarkerInfo nextMarkerInfo;
-    };
+    // VariantPositionContext is defined in mode3-Anchor.hpp
 
     namespace mode0 {
         class AssemblyGraph;
