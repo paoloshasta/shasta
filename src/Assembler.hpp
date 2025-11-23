@@ -1066,6 +1066,9 @@ public:
     // This assumes that createReadGraph5 is multithreaded.
     // Simplifications are possible if this is not the case.
     void createReadGraph5();
+    // Temporary or permanent member
+    uint64_t minAlleleCoverage = 5; // Threshold from main.cpp
+    void computeClusterValidityThreadFunction(uint64_t threadId);
     void createReadGraph5ThreadFunction(uint64_t threadId);
 
     // Data that should be accessible to all threads.
@@ -1089,6 +1092,12 @@ public:
     void storeVariantClusteringPositionPairs(
         size_t threadCount,
         ComputeAlignmentsData& data);
+
+    // Data structures for variant clustering compatibility check.
+    MemoryMapped::Vector<uint8_t> variantClusteringValidClusters;
+    MemoryMapped::Vector<uint8_t> variantClusteringValidClustersCompatible;
+    MemoryMapped::VectorOfVectors<OrientedReadId, uint64_t> haplotypeReads;
+    MemoryMapped::VectorOfVectors<uint64_t, uint64_t> variantClusteringMembersByRepIdx;
 
     void performGlobalVariantClustering(
         uint64_t minCoverage,
