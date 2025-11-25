@@ -66,18 +66,13 @@ void Assembler::createReadGraph5()
     // A cluster is valid if it has at least 2 alleles with coverage >= minAlleleCoverage.
     cout << timestamp << "Running global cluster validity checks." << endl;
     const uint32_t threadCount = std::thread::hardware_concurrency();
-    const uint64_t minAlleleCoverage = 5; // Threshold from main.cpp
-    setupLoadBalancing(clusterCount, 1); // Batch size 1
+    const uint64_t minAlleleCoverage = 5;
+    setupLoadBalancing(clusterCount, 1);
     runThreads(&Assembler::computeClusterValidityThreadFunction, threadCount);
-
     cout << timestamp << "Global cluster validity checks completed." << endl;
 
-    // // TODO: haplotypeReads is a MemoryMapped::VectorOfVectors.
-    // // It must be populated using the 2-pass approach inside the thread function.
-    // haplotypeReads.createNew(
-    //     largeDataName("HaplotypeReads"),
-    //     largeDataPageSize);
 
+    // 4. Prepare for Haplotype Voting
     variantClusteringValidClustersCompatible.createNew(
         largeDataName("VariantClusteringValidClustersCompatible"),
         largeDataPageSize
@@ -85,12 +80,58 @@ void Assembler::createReadGraph5()
     variantClusteringValidClustersCompatible.resize(clusterCount);
     std::fill(variantClusteringValidClustersCompatible.begin(), variantClusteringValidClustersCompatible.end(), 0);
 
-    // 4. Run threads to perform compatibility check and filtering
-    cout << timestamp << "Running compatibility checks." << endl;
-    setupLoadBalancing(getReads().readCount(), 1); // Batch size 1
-    runThreads(&Assembler::createReadGraph5ThreadFunction, threadCount);
+    // 4. Initialize Global Haplotype Graph
+    // Calculate total oriented reads (2 * readCount)
+    const uint64_t orientedReadCount = 2 * reads->readCount();
+    
+    // Create the graph with orientedReadCount vertices
+    cout << timestamp << "Initializing Global Haplotype Graph with " << orientedReadCount << " vertices." << endl;
+    globalHaplotypeGraph = std::make_shared<HaplotypeGraph>(orientedReadCount);
 
-    cout << timestamp << "Compatibility checks completed." << endl;
+    // 5. Run threads to generate votes and add edges directly
+    cout << timestamp << "Running compatibility checks and building haplotype graph." << endl;
+    setupLoadBalancing(getReads().readCount(), 1); 
+    runThreads(&Assembler::createReadGraph5ThreadFunction, threadCount);
+    cout << timestamp << "Haplotype graph construction completed." << endl;
+    
+    cout << timestamp << "Global Haplotype Graph built with " 
+         << boost::num_vertices(*globalHaplotypeGraph) << " vertices and "
+         << boost::num_edges(*globalHaplotypeGraph) << " edges." << endl;
+
+    // 7. Refine Clusters using the Graph
+    cout << timestamp << "Refining clusters using haplotype graph." << endl;
+    
+    // This vector is used to track the quality or "membership status" of each read within a variant cluster.
+    // Here is the breakdown:
+    // 1. Initialization: It creates a new memory-mapped vector sized to positionPairCount (the total number of read-variant pairs).
+    // 2. Default State: It fills the vector with 0, which represents a "Good" or "Keep" status.
+    // 3. Usage: Later in the refineClustersThreadFunction this vector is updated. If a read is identified 
+    // as "stray" (meaning it connects more strongly to reads of a different allele in the haplotype graph than to its own), 
+    // then its status is changed to 1 (Filter/Stray).
+    // Essentially, this prepares the "report card" for every read in every cluster, assuming they are all valid until 
+    // proven otherwise by the graph refinement step.
+    variantClusteringMemberStatus.createNew(
+        largeDataName("VariantClusteringMemberStatus"),
+        largeDataPageSize
+    );
+    variantClusteringMemberStatus.resize(positionPairCount);
+    std::fill(variantClusteringMemberStatus.begin(), variantClusteringMemberStatus.end(), 0); // Default 0 = Good
+
+    setupLoadBalancing(clusterCount, 1);
+    runThreads(&Assembler::refineClustersThreadFunction, threadCount);
+    
+    cout << timestamp << "Cluster refinement completed." << endl;
+
+    // Print how many clusters are valid and how many are compatible.
+    uint64_t validClusterCount = 0;
+    uint64_t compatibleClusterCount = 0;
+    for(uint64_t i=0; i<clusterCount; i++) {
+        if(variantClusteringValidClusters[i]) validClusterCount++;
+        if(variantClusteringValidClustersCompatible[i]) compatibleClusterCount++;
+    }
+    cout << timestamp << "Valid clusters: " << validClusterCount << endl;
+    cout << timestamp << "Compatible clusters: " << compatibleClusterCount << endl;
+
 
     //
     // TODO: REMOVE THIS AFTER TESTING.
@@ -365,10 +406,7 @@ void Assembler::createReadGraph5ThreadFunction(uint64_t threadId)
                     // 2. Must have ACTIVE support (shared reads)
                     
                     if (compatible) {
-                        // OPTION A: "Weak Linkage" (At least one read links them)
-                        // if (supportPhase0 + supportPhase1 > 0) { ... }
-
-                        // OPTION B: "Strong Linkage" (Support for BOTH alleles)
+                        // "Strong Linkage" (Support for BOTH alleles)
                         // This ensures we are tracking two real haplotypes, not just linking noise.
                         if (supportPhase0 > 0 && supportPhase1 > 0) {
                             if(LCG[j] + 1 > LCG[i]) {
@@ -421,15 +459,24 @@ void Assembler::createReadGraph5ThreadFunction(uint64_t threadId)
             }
 
             // 2. Process Isolated Sites
-            // An isolated site is considered informative only if it is supported by a sufficiently high number of reads
-            const uint64_t minIsolatedCoverage = 10; // Stricter threshold for isolated sites
+            // An isolated site is considered informative only if the reference read allele 
+            // is supported by a sufficiently high number of reads.
+            const uint64_t minIsolatedCoverage = 7; // Stricter threshold for isolated sites
             
             for (const auto& p : isolatedSitesIndices) {
                 int nodeIdx = p.second;
                 if (!isAssigned[nodeIdx]) {
                     // Check support for this specific Virtual Cluster
-                    // nodeReads[nodeIdx] contains reads supporting this specific allele choice
-                    if (nodeReads[nodeIdx].size() >= minIsolatedCoverage) {
+                    
+                    // Count reads supporting the reference read allele (Target Allele / Phase 0)
+                    uint64_t targetAlleleSupport = 0;
+                    for (const auto& rp : nodeReads[nodeIdx]) {
+                        if (!rp.isPhase1) { // isPhase1=false means Target Allele
+                            targetAlleleSupport++;
+                        }
+                    }
+
+                    if (targetAlleleSupport >= minIsolatedCoverage) {
                         validChains.push_back({nodeIdx});
                         isAssigned[nodeIdx] = true;
                     }
@@ -445,6 +492,7 @@ void Assembler::createReadGraph5ThreadFunction(uint64_t threadId)
 
             for (const auto& chain : validChains) {
                 for (int nodeIdx : chain) {
+
                     // Mark cluster as valid in global array
                     uint64_t originalClusterId = dpNodes[nodeIdx].clusterId;
 
@@ -475,37 +523,231 @@ void Assembler::createReadGraph5ThreadFunction(uint64_t threadId)
 
             // Final Set: InPhase MINUS OutOfPhase
             // A read is only trusted if it NEVER supported the Alt allele in any valid cluster.
-            vector<uint64_t> finalHapReads;
+            
+            // Calculate total weight (total number of nodes in all valid chains)
+            // This is the number of sites that were compatible and were used to cast votes
+            uint32_t totalWeight = 0;
+            for (const auto& chain : validChains) {
+                totalWeight += (uint32_t)chain.size();
+            }
+
+            for (const auto& chain : validChains) {
+                for (int nodeIdx : chain) {
+                    // Mark cluster as valid... (already done above)
+
+                    // Collect reads
+                    for (const auto& rp : nodeReads[nodeIdx]) {
+                        if (rp.isPhase1 == false) {
+                            // Supported Target Allele -> In Phase
+                            inPhaseReads.push_back(rp.orientedReadIdValue);
+                        } else {
+                            // Supported Alt Allele -> Out of Phase
+                            outOfPhaseReads.push_back(rp.orientedReadIdValue);
+                        }
+                    }
+                }
+            }
+
+            // Sort & Unique for set operations
+            std::sort(inPhaseReads.begin(), inPhaseReads.end());
+            inPhaseReads.erase(std::unique(inPhaseReads.begin(), inPhaseReads.end()), inPhaseReads.end());
+
+            std::sort(outOfPhaseReads.begin(), outOfPhaseReads.end());
+            outOfPhaseReads.erase(std::unique(outOfPhaseReads.begin(), outOfPhaseReads.end()), outOfPhaseReads.end());
+
+            // Final Set: InPhase MINUS OutOfPhase
+            vector<OrientedReadId::Int> finalHapOrientedReadIds;
             // Add Target Read itself (always in phase)
-            finalHapReads.push_back(currentOrientedReadId0.getValue());
+            finalHapOrientedReadIds.push_back(currentOrientedReadId0.getValue());
             std::set_difference(
                 inPhaseReads.begin(), inPhaseReads.end(),
                 outOfPhaseReads.begin(), outOfPhaseReads.end(),
-                std::back_inserter(finalHapReads)
+                std::back_inserter(finalHapOrientedReadIds)
             );
-            
+
+            // Sort again to include the target read
+            std::sort(finalHapOrientedReadIds.begin(), finalHapOrientedReadIds.end());
+            finalHapOrientedReadIds.erase(std::unique(finalHapOrientedReadIds.begin(), finalHapOrientedReadIds.end()), finalHapOrientedReadIds.end());
             
 
-            // Print finalHapReads with one orientedReadId per line if readId is 0
-            if(currentOrientedReadId0.getReadId() == 0) {
-                cout << "Final Haplotype Reads: " << endl;
-                for(OrientedReadId::Int orientedReadIdValue : finalHapReads) {
+            // Print finalHapOrientedReadIds with one orientedReadId per line if readId is 0
+            if(currentOrientedReadId0.getReadId() == 87 and currentOrientedReadId0.getStrand() == 0) {
+                cout << "Final Haplotype Oriented Reads: " << endl;
+                for(OrientedReadId::Int orientedReadIdValue : finalHapOrientedReadIds) {
                     cout << OrientedReadId::fromValue(orientedReadIdValue).getString() << endl;
                 }
             }
 
-            // Store or Use finalHapReads...
-            // (e.g., write to haplotypeReads structure if that's the goal)
-            // haplotypeReads.store(readId, finalHapReads); // Pseudo-code
+
+            // CAST VOTES DIRECTLY TO GRAPH
+            // Add votes: currentOrientedReadId -> otherOrientedReadId
+            {
+                std::lock_guard<std::mutex> lock(haplotypeGraphMutex);
+                for(OrientedReadId::Int otherOrientedReadIdValue : finalHapOrientedReadIds) {
+                    if(otherOrientedReadIdValue != currentOrientedReadId0.getValue()) {
+                        // Try to add edge with totalWeight
+                        auto result = boost::add_edge(currentOrientedReadId0.getValue(), otherOrientedReadIdValue, totalWeight, *globalHaplotypeGraph);
+                    }
+                }
+            }
 
 
+        }
+    }
+}
+
+
+void Assembler::refineClustersThreadFunction(uint64_t threadId) {
+    const uint64_t currentMinAlleleCoverage = this->minAlleleCoverage;
+    const auto& graph = *globalHaplotypeGraph;
+    
+    uint64_t clusterIdBegin, clusterIdEnd;
+    while (getNextBatch(clusterIdBegin, clusterIdEnd)) {
+        for (uint64_t clusterId = clusterIdBegin; clusterId < clusterIdEnd; clusterId++) {
             
+            // Only process valid/compatible clusters
+            if (!variantClusteringValidClustersCompatible[clusterId]) {
+                continue;
+            }
 
-
-
-
-
+            const auto& members = variantClusteringMembersByRepIdx[clusterId];
             
+            // 1. Identify Valid Alleles (those with sufficient coverage)
+            std::array<uint32_t, 5> alleleCounts = {0};
+            for (uint64_t memberIdx : members) {
+                if (memberIdx < variantClusteringPositionPairAlleles.size()) {
+                    uint8_t a = variantClusteringPositionPairAlleles[memberIdx];
+                    if (a < 5) alleleCounts[a]++;
+                }
+            }
+            
+            std::vector<uint8_t> validAlleles;
+            for(uint8_t a=0; a<5; a++) {
+                if (alleleCounts[a] >= currentMinAlleleCoverage) {
+                    validAlleles.push_back(a);
+                }
+            }
+            
+            // If fewer than 2 valid alleles, no phasing to refine
+            if (validAlleles.size() < 2) continue;
+
+            // 2. Partition Reads by Allele using oriented read IDs
+            std::array<std::unordered_set<uint32_t>, 5> groups;
+            for (uint64_t memberIdx : members) {
+                if (memberIdx < variantClusteringPositionPairAlleles.size()) {
+                    uint8_t a = variantClusteringPositionPairAlleles[memberIdx];
+                    if (a < 5) {
+                        const auto& pp = variantClusteringPositionPairs[memberIdx];
+                        groups[a].insert(pp.first.getValue());
+                    }
+                }
+            }
+
+            // 3. Process each allele group separately
+            for (uint8_t allele = 0; allele < 5; allele++) {
+                const auto& group = groups[allele];
+                
+                // If group is too small, we can't really do intersection of 2 reads + others.
+                // If size < 3, we just keep them (default status 0).
+                if(group.size() < 3) {
+                    continue;
+                }
+
+                // Store (ReadVal, Weight) pairs
+                std::vector<std::pair<uint32_t, uint32_t>> readWeights;
+                readWeights.reserve(group.size());
+
+                // Access weight map
+                auto weightMap = boost::get(boost::edge_weight, graph);
+
+                for(uint32_t readVal : group) {
+                    uint32_t weight = 0;
+                    // Check if vertex exists in graph
+                    if (readVal >= boost::num_vertices(graph)) {
+                        readWeights.push_back({readVal, 0}); 
+                    } else {
+                        // Get weight from first outgoing edge
+                        auto outEdges = boost::out_edges(readVal, graph);
+                        if(outEdges.first != outEdges.second) {
+                            auto edge = *outEdges.first;
+                            weight = weightMap[edge];
+                        }
+                    }
+                    readWeights.push_back({readVal, weight});
+                }
+
+                // Sort by Weight Descending
+                std::sort(readWeights.begin(), readWeights.end(), 
+                    [](const std::pair<uint32_t, uint32_t>& a, const std::pair<uint32_t, uint32_t>& b) {
+                        return a.second > b.second;
+                    });
+
+                // If the top 2 have 0 weight (no edges), keep all.
+                if (readWeights[0].second == 0 || readWeights.size() < 2) {
+                    continue;
+                }
+
+                // Select Top 2
+                uint32_t r1 = readWeights[0].first;
+                uint32_t r2 = readWeights[1].first;
+                
+                // Filter
+                for(const auto& rw : readWeights) {
+                    uint32_t readVal = rw.first;
+                    
+                    // Keep Top 2
+                    if (readVal == r1 || readVal == r2) {
+                        continue; 
+                    }
+
+                    // Check connectivity to R1 and R2
+                    bool connectedToR1 = false;
+                    bool connectedToR2 = false;
+
+                    if (r1 < boost::num_vertices(graph) && r2 < boost::num_vertices(graph) && readVal < boost::num_vertices(graph)) {
+                        
+                        // Check R1 neighbors
+                        auto neighborsR1 = boost::adjacent_vertices(r1, graph);
+                        for(auto it = neighborsR1.first; it != neighborsR1.second; ++it) {
+                            if(*it == readVal) { connectedToR1 = true; break; }
+                        }
+                        if (!connectedToR1) {
+                            auto inEdgesR1 = boost::in_edges(r1, graph);
+                            for(auto it = inEdgesR1.first; it != inEdgesR1.second; ++it) {
+                                if(boost::source(*it, graph) == readVal) { connectedToR1 = true; break; }
+                            }
+                        }
+
+                        // Check R2 neighbors
+                        auto neighborsR2 = boost::adjacent_vertices(r2, graph);
+                        for(auto it = neighborsR2.first; it != neighborsR2.second; ++it) {
+                            if(*it == readVal) { connectedToR2 = true; break; }
+                        }
+                        if (!connectedToR2) {
+                            auto inEdgesR2 = boost::in_edges(r2, graph);
+                            for(auto it = inEdgesR2.first; it != inEdgesR2.second; ++it) {
+                                if(boost::source(*it, graph) == readVal) { connectedToR2 = true; break; }
+                            }
+                        }
+                    }
+
+                    if (connectedToR1 && connectedToR2) {
+                        // Keep
+                    } else {
+                        // Mark as Stray
+                        // Need to find memberIdx
+                        for(uint64_t memberIdx : members) {
+                            if (memberIdx < variantClusteringPositionPairAlleles.size()) {
+                                if (variantClusteringPositionPairAlleles[memberIdx] == allele && 
+                                    variantClusteringPositionPairs[memberIdx].first.getValue() == readVal) {
+                                    variantClusteringMemberStatus[memberIdx] = 1; // Mark as Stray
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }

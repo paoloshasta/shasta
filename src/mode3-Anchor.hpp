@@ -166,6 +166,8 @@ public:
         const MemoryMapped::Vector<std::pair<OrientedReadId, uint32_t>>& positionPairs,
         const MemoryMapped::Vector<uint8_t>& positionPairAlleles,
         const MemoryMapped::Vector<VariantPositionContext>& positionPairContexts,
+        const MemoryMapped::Vector<uint8_t>& variantClusteringValidClustersCompatible,
+        const MemoryMapped::Vector<uint8_t>& variantClusteringMemberStatus,
         uint64_t minClusterCoverage,
         uint64_t minAlleleCoverage,
         double minCommonKmerFraction,  // Minimum fraction of reads sharing a kmer (e.g., 0.8 = 80%)
@@ -362,13 +364,15 @@ private:
         double minCommonKmerFraction;  // Minimum fraction of reads that must share a kmer (e.g., 0.8 = 80%)
         
 
-        const std::vector<uint64_t>* clusterRepresentatives;
-        DisjointSets* disjointSets;
+        const std::vector<uint64_t>* clusterRepresentatives = nullptr;
+        DisjointSets* disjointSets = nullptr;          // Original (Position Pairs -> Clusters)
         std::vector< std::vector<uint64_t> > membersByRepIdx;
 
-        const MemoryMapped::Vector< std::pair<OrientedReadId, uint32_t> >* positionPairs;
-        const MemoryMapped::Vector<uint8_t>* positionPairAlleles;
-        const MemoryMapped::Vector<VariantPositionContext>* positionPairContexts;
+        const MemoryMapped::Vector< std::pair<OrientedReadId, uint32_t> >* positionPairs = nullptr;
+        const MemoryMapped::Vector<uint8_t>* positionPairAlleles = nullptr;
+        const MemoryMapped::Vector<VariantPositionContext>* positionPairContexts = nullptr;
+        const MemoryMapped::Vector<uint8_t>* variantClusteringValidClustersCompatible = nullptr;
+        const MemoryMapped::Vector<uint8_t>* variantClusteringMemberStatus = nullptr;
 
         // The MarkerInfo objects for the candidate anchors found by each thread.
         using MarkerInfo = MarkerKmers::MarkerInfo;

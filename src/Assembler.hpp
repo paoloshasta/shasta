@@ -28,6 +28,12 @@
 #include "string.hpp"
 #include "utility.hpp"
 
+// Boost.
+#include <boost/graph/adjacency_list.hpp>
+
+// Standard library.
+#include <mutex>
+
 namespace shasta {
 
     class Assembler;
@@ -1108,6 +1114,30 @@ public:
     MemoryMapped::Vector<uint8_t> variantClusteringPositionPairAlleles;
     MemoryMapped::Vector<VariantPositionContext> variantClusteringPositionPairContexts;
     std::shared_ptr<DisjointSets> variantClusteringDisjointSets;
+
+    
+    // Mutex to protect the global haplotype graph during parallel edge addition
+    std::mutex haplotypeGraphMutex;
+
+    // Global Haplotype Graph (Boost Adjacency List)
+    // Undirected graph where vertices are OrientedReadId values
+    // Edge property: weight (uint32_t) representing the number of sites that were compatible and were used to cast votes
+    using HaplotypeGraph = boost::adjacency_list<
+        boost::setS,           // OutEdgeList = set (no duplicate edges)
+        boost::vecS,           // VertexList = vector (indexed by OrientedReadId value)
+        boost::bidirectionalS, // Bidirectional graph (access to in-edges and out-edges)
+        boost::no_property,    // Vertex properties
+        boost::property<boost::edge_weight_t, uint32_t> // Edge properties: weight
+    >;
+    std::shared_ptr<HaplotypeGraph> globalHaplotypeGraph;
+
+    // Status of each member (PositionPair) in the clusters.
+    // 0 = Good/Keep
+    // 1 = Stray/Filter
+    MemoryMapped::Vector<uint8_t> variantClusteringMemberStatus;
+
+    void refineClustersThreadFunction(uint64_t threadId);
+
     std::vector<uint64_t> variantClusteringClusterRepresentatives;
     std::vector<uint64_t> variantClusteringLinkCounts;  // Per-thread counters: [thread*4+0]=forward links, [thread*4+1]=RC links, [thread*4+2]=mismatches found, [thread*4+3]=mismatches skipped
     

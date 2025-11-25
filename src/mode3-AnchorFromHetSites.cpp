@@ -35,6 +35,8 @@ Anchors::Anchors(
     const MemoryMapped::Vector< std::pair<OrientedReadId, uint32_t> >& positionPairs,
     const MemoryMapped::Vector<uint8_t>& positionPairAlleles,
     const MemoryMapped::Vector<VariantPositionContext>& positionPairContexts,
+    const MemoryMapped::Vector<uint8_t>& variantClusteringValidClustersCompatible,
+    const MemoryMapped::Vector<uint8_t>& variantClusteringMemberStatus,
     uint64_t minClusterCoverage,
     uint64_t minAlleleCoverage,
     double minCommonKmerFraction,
@@ -56,11 +58,13 @@ Anchors::Anchors(
     data.positionPairs = &positionPairs;
     data.positionPairAlleles = &positionPairAlleles;
     data.positionPairContexts = &positionPairContexts;
+    data.variantClusteringValidClustersCompatible = &variantClusteringValidClustersCompatible;
+    data.variantClusteringMemberStatus = &variantClusteringMemberStatus;
     data.minClusterCoverage = minClusterCoverage;
     data.minAlleleCoverage = minAlleleCoverage;
     data.minCommonKmerFraction = minCommonKmerFraction;
     data.anchorsSkippedNoCommonKmer = 0;
-    
+        
     // Initialize the lock-free marker tracking array
     // Allocate it to the total number of markers across all oriented reads
     data.markerCount = markers.totalSize();
@@ -381,11 +385,24 @@ void Anchors::constructFromHetSitesThreadFunction(uint64_t threadId)
     uint64_t clustersSkipped = 0;
     uint64_t clustersSkippedDuplicate = 0;
     uint64_t clustersSkippedStrand1Lowest = 0;
+    uint64_t clustersSkippedNotCompatible = 0;
     
     while(getNextBatch(begin, end)) {
 
         // Loop over clusters assigned to this thread.
         for(uint64_t clusterIdx = begin; clusterIdx < end; clusterIdx++) {
+
+            // Get the actual cluster ID (representative ID)
+            const uint64_t clusterId = (*data.clusterRepresentatives)[clusterIdx];
+
+            // FILTER: Only process clusters that were marked compatible in ReadGraph5
+            // Use clusterId, NOT clusterIdx
+            if (!(*data.variantClusteringValidClustersCompatible)[clusterId]) {
+                clustersSkipped++;
+                clustersSkippedNotCompatible++;
+                continue;
+            }
+            
             clustersProcessed++;
             
             // Get the member ids of this cluster
@@ -523,6 +540,12 @@ void Anchors::constructFromHetSitesThreadFunction(uint64_t threadId)
                 alleleMemberIds.reserve(readsByAllele[allele].size());
                 
                 for(uint64_t id: memberIds) {
+                    // Skip members marked as stray by graph refinement
+                    if(id < data.variantClusteringMemberStatus->size() && 
+                       (*data.variantClusteringMemberStatus)[id] == 1) {
+                        continue;  // Skip stray/filtered reads
+                    }
+                    
                     if(id < positionPairAlleles.size() && positionPairAlleles[id] == allele) {
                         alleleMemberIds.push_back(id);
                     }
@@ -718,10 +741,13 @@ void Anchors::constructFromHetSitesThreadFunction(uint64_t threadId)
         }
     }
     
-    // // DEBUG: Print summary for this thread
-    // cout << "Thread " << threadId << " summary:" << endl;
-    // cout << "  Clusters processed: " << clustersProcessed << endl;
-    // cout << "  Clusters skipped (duplicates): " << clustersSkippedDuplicate << endl;
-    // cout << "  Clusters skipped (strand-1 lowest): " << clustersSkippedStrand1Lowest << endl;
-    // cout << "  Total clusters skipped: " << clustersSkipped << endl;
+    // DEBUG: Print summary for this thread (Uncomment to see results)
+
+    debugOut << "Thread " << threadId << " summary:" << endl;
+    debugOut << "  Clusters processed: " << clustersProcessed << endl;
+    debugOut << "  Clusters skipped (not compatible): " << clustersSkippedNotCompatible << endl;
+    debugOut << "  Clusters skipped (duplicates): " << clustersSkippedDuplicate << endl;
+    debugOut << "  Clusters skipped (strand-1 lowest): " << clustersSkippedStrand1Lowest << endl;
+    debugOut << "  Total clusters skipped: " << clustersSkipped << endl;
+
 }

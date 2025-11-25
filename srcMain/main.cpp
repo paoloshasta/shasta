@@ -1238,6 +1238,8 @@ void shasta::main::mode3Assembly(
             assembler.variantClusteringPositionPairs,
             assembler.variantClusteringPositionPairAlleles,
             assembler.variantClusteringPositionPairContexts,
+            assembler.variantClusteringValidClustersCompatible,
+            assembler.variantClusteringMemberStatus,
             /*minClusterCoverage*/ 6,
             /*minAlleleCoverage*/ 5,
             /*minCommonKmerFraction*/ 0.8,
