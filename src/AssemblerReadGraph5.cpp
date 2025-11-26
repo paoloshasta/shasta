@@ -682,29 +682,27 @@ void Assembler::refineClustersThreadFunction(uint64_t threadId) {
                         return a.second > b.second;
                     });
 
-                // If the top 2 have 0 weight (no edges), keep all.
-                if (readWeights[0].second == 0 || readWeights.size() < 2) {
+                // If the top 1 has 0 weight (no edges), keep all.
+                if (readWeights[0].second == 0) {
                     continue;
                 }
 
-                // Select Top 2
+                // Select Top 1
                 uint32_t r1 = readWeights[0].first;
-                uint32_t r2 = readWeights[1].first;
                 
                 // Filter
                 for(const auto& rw : readWeights) {
                     uint32_t readVal = rw.first;
                     
-                    // Keep Top 2
-                    if (readVal == r1 || readVal == r2) {
+                    // Keep Top 1
+                    if (readVal == r1) {
                         continue; 
                     }
 
-                    // Check connectivity to R1 and R2
+                    // Check connectivity to R1
                     bool connectedToR1 = false;
-                    bool connectedToR2 = false;
 
-                    if (r1 < boost::num_vertices(graph) && r2 < boost::num_vertices(graph) && readVal < boost::num_vertices(graph)) {
+                    if (r1 < boost::num_vertices(graph) && readVal < boost::num_vertices(graph)) {
                         
                         // Check R1 neighbors
                         auto neighborsR1 = boost::adjacent_vertices(r1, graph);
@@ -717,21 +715,9 @@ void Assembler::refineClustersThreadFunction(uint64_t threadId) {
                                 if(boost::source(*it, graph) == readVal) { connectedToR1 = true; break; }
                             }
                         }
-
-                        // Check R2 neighbors
-                        auto neighborsR2 = boost::adjacent_vertices(r2, graph);
-                        for(auto it = neighborsR2.first; it != neighborsR2.second; ++it) {
-                            if(*it == readVal) { connectedToR2 = true; break; }
-                        }
-                        if (!connectedToR2) {
-                            auto inEdgesR2 = boost::in_edges(r2, graph);
-                            for(auto it = inEdgesR2.first; it != inEdgesR2.second; ++it) {
-                                if(boost::source(*it, graph) == readVal) { connectedToR2 = true; break; }
-                            }
-                        }
                     }
 
-                    if (connectedToR1 && connectedToR2) {
+                    if (connectedToR1) {
                         // Keep
                     } else {
                         // Mark as Stray
