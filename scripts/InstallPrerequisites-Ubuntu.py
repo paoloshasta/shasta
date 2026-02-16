@@ -21,7 +21,6 @@ def installAptPackages():
     "g++",
     "make",
     "cmake",
-    "libboost-system-dev", 
     "libboost-program-options-dev",
     "libboost-graph-dev",
     "libboost-chrono-dev",
