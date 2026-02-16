@@ -34,6 +34,7 @@ def installAptPackages():
     "gnuplot",
     "python3-dev", 
     ]
+    runCommand("sudo apt-get update")
     runCommand("sudo apt-get install --assume-yes " + " ".join(packages))
 
 
