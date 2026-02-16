@@ -38,10 +38,6 @@ if(SHASTA_LONG_MARKERS)
     add_definitions(-DSHASTA_LONG_MARKERS)
 endif(SHASTA_LONG_MARKERS)
 
-# Definitions needed to eliminate dependency on the boost system library.
-add_definitions(-DBOOST_SYSTEM_NO_DEPRECATED)
-add_definitions(-DBOOST_ERROR_CODE_HEADER_ONLY)
-
 # This is needed to avoid some Boost warnings about deprecated messages.
 # We canot fix this in Shasta as it is a Boost problem.
 # It can be removed if Boost is fixed.
@@ -67,14 +63,14 @@ if(X86_64)
     target_link_libraries(
         shastaStaticExecutable
         shastaStaticLibrary
-        atomic boost_system boost_program_options boost_chrono boost_serialization  spoa png z
+        atomic boost_program_options boost_chrono boost_serialization  spoa png z
         lapack blas gfortran quadmath
         -Wl,--whole-archive -lpthread -Wl,--no-whole-archive)
 else(X86_64)
     target_link_libraries(
         shastaStaticExecutable
         shastaStaticLibrary
-        atomic boost_system boost_program_options boost_chrono boost_serialization spoa png z
+        atomic boost_program_options boost_chrono boost_serialization spoa png z
         lapack blas gfortran
         -Wl,--whole-archive -lpthread -Wl,--no-whole-archive)
 endif(X86_64) 
