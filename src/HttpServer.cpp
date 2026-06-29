@@ -10,7 +10,6 @@ using namespace shasta;
 // Boost libraries.
 #include <boost/algorithm/string.hpp>
 #include <boost/asio/ip/tcp.hpp>
-#include <boost/asio/io_service.hpp>
 #include <boost/asio/ip/tcp.hpp>
 #include <boost/asio/ip/v6_only.hpp>
 #include <boost/tokenizer.hpp>
@@ -46,11 +45,11 @@ void HttpServer::explore(uint16_t port, bool localOnly, bool sameUserOnly)
     }
 
     // Create the acceptor, making sure to accept both ipv4 and ipv6 ip addresses.
-    io_service service;
-    tcp::acceptor acceptor(service);
+    io_context context;
+    tcp::acceptor acceptor(context);
     tcp::endpoint endpoint = (
         localOnly ?
-        tcp::endpoint(ip::address::from_string("::ffff:127.0.0.1"), port) :
+        tcp::endpoint(boost::asio::ip::make_address("::ffff:127.0.0.1"), port) :
         tcp::endpoint(tcp::v6(), port)
     );
     acceptor.open(endpoint.protocol());
@@ -124,7 +123,7 @@ void HttpServer::explore(uint16_t port, bool localOnly, bool sameUserOnly)
           tcp::iostream s;
           tcp::endpoint remoteEndpoint;
           boost::system::error_code errorCode;
-          acceptor.accept(*s.rdbuf(), remoteEndpoint, errorCode);
+          acceptor.accept(s.socket(), remoteEndpoint, errorCode);
           if(errorCode) {
               // If interrupted with Ctrl-C, we get here.
               cout << "\nError code from accept: " << errorCode.message() << endl;
